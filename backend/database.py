@@ -402,6 +402,17 @@ class Database:
         finally:
             conn.close()
 
+    def get_timesheet_by_sync_id(self, sync_id):
+        """Get a timesheet entry by sync_id"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM timesheet WHERE sync_id = ?", (sync_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
     def get_all_timesheets(self, limit=1000, offset=0):
         """Get all timesheet entries with pagination"""
         conn = self.get_connection()
