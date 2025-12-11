@@ -1,10 +1,10 @@
-# Attendance Sync - Developer Documentation
+# Biometric Integration - Developer Documentation
 
 > **For AI Assistants (Claude):** This document provides comprehensive context for understanding and working with this codebase. Read this first before making changes.
 
 ## Project Overview
 
-**Attendance Sync** is a desktop application that bridges two systems:
+**Biometric Integration** is a desktop application that bridges two systems:
 1. **ZKTeco Attendance Devices** - Source of employee attendance/timesheet data (via PyZk library)
 2. **Cloud Payroll Systems** - Destination for syncing timesheet data
 

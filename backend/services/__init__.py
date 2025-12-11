@@ -1,1 +1,1 @@
-"""Attendance Sync - Services Module"""
+"""Biometric Integration - Services Module"""

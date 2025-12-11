@@ -1,5 +1,5 @@
 """
-Attendance Sync - Push Service
+Biometric Integration - Push Service
 Service for pushing timesheet data to cloud payroll systems
 """
 
@@ -23,7 +23,7 @@ class PushService:
         self.database = database
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'Attendance Sync/1.0',
+            'User-Agent': 'Biometric Integration/1.0',
             'Accept': 'application/json',
             'Content-Type': 'application/json'
         })

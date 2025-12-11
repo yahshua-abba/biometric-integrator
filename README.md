@@ -1,4 +1,4 @@
-# Attendance Sync
+# Biometric Integration
 
 A desktop application that syncs attendance data from ZKTeco biometric devices to cloud payroll systems.
 
@@ -25,13 +25,13 @@ A desktop application that syncs attendance data from ZKTeco biometric devices t
 ## Installation
 
 ### macOS
-1. Download `AttendanceSync-vX.X.X.dmg` from Releases
+1. Download `BiometricIntegration-vX.X.X.dmg` from Releases
 2. Open DMG and drag to Applications
 3. First launch takes 1-2 minutes (one-time initialization)
 
 ### Windows
-1. Download `AttendanceSync-vX.X.X-Windows.zip` from Releases
-2. Extract and run `AttendanceSync.exe`
+1. Download `BiometricIntegration-vX.X.X-Windows.zip` from Releases
+2. Extract and run `BiometricIntegration.exe`
 
 ## Documentation
 

@@ -1,7 +1,7 @@
 {
-  "name": "attendance-sync-frontend",
+  "name": "biometric-integration-frontend",
   "version": "1.0.0",
-  "description": "Attendance Sync - Frontend",
+  "description": "Biometric Integration - Frontend",
   "type": "module",
   "scripts": {
     "dev": "vite",

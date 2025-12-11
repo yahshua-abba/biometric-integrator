@@ -1,5 +1,5 @@
 """
-Attendance Sync - Python-JavaScript Bridge
+Biometric Integration - Python-JavaScript Bridge
 Provides QWebChannel bridge for communication between PyQt6 and Vue.js
 """
 
@@ -498,7 +498,7 @@ class Bridge(QObject):
         return json.dumps({
             "success": True,
             "data": {
-                "name": "Attendance Sync",
+                "name": "Biometric Integration",
                 "version": "1.0.0",
                 "description": "Sync attendance data from ZKTeco devices to cloud payroll"
             }

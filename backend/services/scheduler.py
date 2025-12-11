@@ -1,5 +1,5 @@
 """
-Attendance Sync - Sync Scheduler
+Biometric Integration - Sync Scheduler
 Automated scheduling for pull and push sync operations
 """
 

@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# Attendance Sync - PyInstaller Spec for macOS
+# Biometric Integration - PyInstaller Spec for macOS
 
 import sys
 from pathlib import Path
@@ -48,7 +48,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='AttendanceSync',
+    name='BiometricIntegration',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -69,17 +69,17 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='AttendanceSync',
+    name='BiometricIntegration',
 )
 
 app = BUNDLE(
     coll,
-    name='Attendance Sync.app',
+    name='Biometric Integration.app',
     icon=str(project_path / 'icons' / 'icon.icns'),
-    bundle_identifier='com.theabba.attendance-sync',
+    bundle_identifier='com.theabba.biometric-integration',
     info_plist={
-        'CFBundleName': 'Attendance Sync',
-        'CFBundleDisplayName': 'Attendance Sync',
+        'CFBundleName': 'Biometric Integration',
+        'CFBundleDisplayName': 'Biometric Integration',
         'CFBundleVersion': '1.0.0',
         'CFBundleShortVersionString': '1.0.0',
         'NSHighResolutionCapable': True,

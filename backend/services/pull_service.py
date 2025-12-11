@@ -1,5 +1,5 @@
 """
-Attendance Sync - Pull Service
+Biometric Integration - Pull Service
 Pulls attendance data from ZKTeco devices via PyZk
 """
 

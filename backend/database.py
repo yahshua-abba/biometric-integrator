@@ -1,5 +1,5 @@
 """
-Attendance Sync - Database Manager
+Biometric Integration - Database Manager
 SQLite database for storing timesheet data and sync status
 """
 

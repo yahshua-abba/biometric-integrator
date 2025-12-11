@@ -1,5 +1,5 @@
 /**
- * Attendance Sync - Bridge Service
+ * Biometric Integration - Bridge Service
  * Handles communication with PyQt6 backend via QWebChannel
  */
 

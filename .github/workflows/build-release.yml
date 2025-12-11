@@ -61,7 +61,7 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            dist/AttendanceSync-*.dmg
+            dist/BiometricIntegration-*.dmg
           generate_release_notes: true
           draft: false
           prerelease: false
@@ -119,13 +119,13 @@ jobs:
         working-directory: ./dist
         run: |
           $version = "${{ github.ref_name }}".TrimStart('v')
-          Compress-Archive -Path AttendanceSync.exe -DestinationPath AttendanceSync-v$version-Windows.zip
+          Compress-Archive -Path BiometricIntegration.exe -DestinationPath BiometricIntegration-v$version-Windows.zip
 
       - name: Upload Windows ZIP to Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            dist/AttendanceSync-*.zip
+            dist/BiometricIntegration-*.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,11 +1,11 @@
 #!/bin/bash
-# Attendance Sync - DMG Installer Creator for macOS
+# Biometric Integration - DMG Installer Creator for macOS
 
 set -e
 
-APP_NAME="Attendance Sync"
+APP_NAME="Biometric Integration"
 VERSION="${1:-1.0.0}"  # Accept version as argument, default to 1.0.0
-DMG_NAME="AttendanceSync-v${VERSION}.dmg"
+DMG_NAME="BiometricIntegration-v${VERSION}.dmg"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
