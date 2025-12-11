@@ -1,6 +1,6 @@
 """
-ZKTeco Integration Tool - Pull Service
-Pulls attendance data from ZKTeco device via PyZk
+Attendance Sync - Pull Service
+Pulls attendance data from ZKTeco devices via PyZk
 """
 
 import logging

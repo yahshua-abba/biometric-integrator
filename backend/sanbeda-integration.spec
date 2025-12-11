@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# San Beda Integration Tool - PyInstaller Spec for macOS
+# Attendance Sync - PyInstaller Spec for macOS
 
 import sys
 from pathlib import Path
@@ -48,7 +48,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='SanBedaIntegration',
+    name='AttendanceSync',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -69,17 +69,17 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='SanBedaIntegration',
+    name='AttendanceSync',
 )
 
 app = BUNDLE(
     coll,
-    name='San Beda Integration.app',
+    name='Attendance Sync.app',
     icon=str(project_path / 'icons' / 'icon.icns'),
-    bundle_identifier='com.theabba.sanbeda-integration',
+    bundle_identifier='com.theabba.attendance-sync',
     info_plist={
-        'CFBundleName': 'San Beda Integration Tool',
-        'CFBundleDisplayName': 'San Beda Integration',
+        'CFBundleName': 'Attendance Sync',
+        'CFBundleDisplayName': 'Attendance Sync',
         'CFBundleVersion': '1.0.0',
         'CFBundleShortVersionString': '1.0.0',
         'NSHighResolutionCapable': True,

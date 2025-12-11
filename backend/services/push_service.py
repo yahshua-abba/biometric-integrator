@@ -1,6 +1,6 @@
 """
-San Beda Integration Tool - Push Service
-Service for pushing timesheet data to YAHSHUA Payroll cloud system
+Attendance Sync - Push Service
+Service for pushing timesheet data to cloud payroll systems
 """
 
 import requests
@@ -23,7 +23,7 @@ class PushService:
         self.database = database
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'San Beda Integration Tool/1.0',
+            'User-Agent': 'Attendance Sync/1.0',
             'Accept': 'application/json',
             'Content-Type': 'application/json'
         })
@@ -185,7 +185,7 @@ class PushService:
                 # Transform to YAHSHUA format
                 log_entry = {
                     "id": timesheet['id'],
-                    "employee": employee_code,  # San Beda employee code
+                    "employee": employee_code,  # Employee code from ZKTeco device
                     "log_time": timesheet['time'],  # HH:MM format
                     "log_type": timesheet['log_type'].upper(),  # IN or OUT
                     "sync_id": timesheet['sync_id'],

@@ -1,6 +1,6 @@
 """
-ZKTeco Integration Tool - Main Application
-Desktop application for syncing timekeeping data between ZKTeco device and cloud systems
+Attendance Sync - Main Application
+Desktop application for syncing attendance data between ZKTeco devices and cloud payroll
 """
 
 import sys
@@ -59,7 +59,7 @@ def show_native_splash():
             import tkinter as tk
 
             _tk_root = tk.Tk()
-            _tk_root.title("ZKTeco Integration")
+            _tk_root.title("Attendance Sync")
 
             # Remove window decorations
             _tk_root.overrideredirect(True)
@@ -80,7 +80,7 @@ def show_native_splash():
             # App name
             title_label = tk.Label(
                 _tk_root,
-                text="ZKTeco",
+                text="Attendance",
                 font=("Arial", 28, "bold"),
                 fg="white",
                 bg="#1e40af"
@@ -90,7 +90,7 @@ def show_native_splash():
             # Subtitle
             subtitle_label = tk.Label(
                 _tk_root,
-                text="Integration Tool",
+                text="Sync",
                 font=("Arial", 14),
                 fg="white",
                 bg="#1e40af"
@@ -232,12 +232,12 @@ def create_splash_pixmap():
     painter.setPen(QColor("white"))
     font = QFont("Arial", 24, QFont.Weight.Bold)
     painter.setFont(font)
-    painter.drawText(pixmap.rect().adjusted(0, 50, 0, 0), Qt.AlignmentFlag.AlignHCenter, "ZKTeco")
+    painter.drawText(pixmap.rect().adjusted(0, 50, 0, 0), Qt.AlignmentFlag.AlignHCenter, "Attendance")
 
     # Draw subtitle
     font = QFont("Arial", 14)
     painter.setFont(font)
-    painter.drawText(pixmap.rect().adjusted(0, 90, 0, 0), Qt.AlignmentFlag.AlignHCenter, "Integration Tool")
+    painter.drawText(pixmap.rect().adjusted(0, 90, 0, 0), Qt.AlignmentFlag.AlignHCenter, "Sync")
 
     # Draw loading message
     font = QFont("Arial", 11)
@@ -279,11 +279,11 @@ class IntegrationApp:
     """Main application class"""
 
     def __init__(self):
-        logger.info("Initializing ZKTeco Integration Tool")
+        logger.info("Initializing Attendance Sync")
 
         # Initialize Qt Application FIRST
         self.app = QApplication(sys.argv)
-        self.app.setApplicationName("ZKTeco Integration Tool")
+        self.app.setApplicationName("Attendance Sync")
         self.app.setOrganizationName("The Abba")
 
         # Close Tkinter splash and show Qt splash
@@ -370,7 +370,7 @@ class IntegrationApp:
         """Create and configure the web view with menu bar"""
         # Create main window
         self.main_window = QMainWindow()
-        self.main_window.setWindowTitle("ZKTeco Integration Tool")
+        self.main_window.setWindowTitle("Attendance Sync")
 
         # Create web view
         self.view = QWebEngineView()
@@ -509,10 +509,10 @@ class IntegrationApp:
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.about(
             self.main_window,
-            "About ZKTeco Integration Tool",
-            "ZKTeco Integration Tool v1.0.0\n\n"
-            "Bridge between ZKTeco attendance device\n"
-            "and YAHSHUA cloud payroll.\n\n"
+            "About Attendance Sync",
+            "Attendance Sync v1.0.0\n\n"
+            "Sync attendance data from ZKTeco devices\n"
+            "to cloud payroll systems.\n\n"
             "© 2025 The Abba. All rights reserved."
         )
 
@@ -526,7 +526,7 @@ def main():
     """Application entry point"""
     try:
         logger.info("=" * 80)
-        logger.info("ZKTeco Integration Tool Starting")
+        logger.info("Attendance Sync Starting")
         logger.info(f"Python Version: {sys.version}")
         logger.info(f"Platform: {platform.system()} {platform.release()}")
         logger.info(f"Frozen (packaged): {IS_FROZEN}")

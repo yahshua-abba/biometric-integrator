@@ -1,5 +1,5 @@
 """
-ZKTeco Integration Tool - Database Manager
+Attendance Sync - Database Manager
 SQLite database for storing timesheet data and sync status
 """
 

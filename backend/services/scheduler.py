@@ -1,5 +1,5 @@
 """
-San Beda Integration Tool - Sync Scheduler
+Attendance Sync - Sync Scheduler
 Automated scheduling for pull and push sync operations
 """
 

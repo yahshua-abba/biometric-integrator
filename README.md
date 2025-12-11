@@ -1,11 +1,12 @@
-# San Beda Integration Tool
+# Attendance Sync
 
-A desktop application that bridges San Beda's on-premise timekeeping system with YAHSHUA cloud payroll.
+A desktop application that syncs attendance data from ZKTeco biometric devices to cloud payroll systems.
 
 ## Features
 
-- **Pull** - Fetch attendance data from San Beda on-premise server
-- **Push** - Sync timesheet data to YAHSHUA cloud payroll
+- **Pull** - Fetch attendance data from ZKTeco devices
+- **Push** - Sync timesheet data to cloud payroll
+- **Multi-Device** - Support multiple ZKTeco devices on the network
 - **Auto Sync** - Configurable automatic sync intervals
 - **Offline-First** - Works without internet, syncs when online
 - **Activity Logs** - Complete history of all sync operations
@@ -17,25 +18,26 @@ A desktop application that bridges San Beda's on-premise timekeeping system with
 | Backend | Python 3.10+ / PyQt6 |
 | Frontend | Vue.js 3 / Vite / TailwindCSS |
 | Database | SQLite |
+| Device | PyZk (ZKTeco SDK) |
 | Packaging | PyInstaller |
 | CI/CD | GitHub Actions |
 
 ## Installation
 
 ### macOS
-1. Download `SanBedaIntegration-vX.X.X.dmg` from Releases
+1. Download `AttendanceSync-vX.X.X.dmg` from Releases
 2. Open DMG and drag to Applications
 3. First launch takes 1-2 minutes (one-time initialization)
 
 ### Windows
-1. Download `SanBedaIntegration-vX.X.X-Windows.zip` from Releases
-2. Extract and run `SanBedaIntegration.exe`
+1. Download `AttendanceSync-vX.X.X-Windows.zip` from Releases
+2. Extract and run `AttendanceSync.exe`
 
 ## Documentation
 
 See **[CLAUDE.md](CLAUDE.md)** for comprehensive developer documentation including:
 - Architecture overview
-- Authentication flows (San Beda MD5 + YAHSHUA Bearer)
+- ZKTeco device communication
 - Database schema
 - Build instructions
 - Troubleshooting guide

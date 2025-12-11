@@ -1,14 +1,14 @@
-# ZKTeco Integration Tool - Developer Documentation
+# Attendance Sync - Developer Documentation
 
 > **For AI Assistants (Claude):** This document provides comprehensive context for understanding and working with this codebase. Read this first before making changes.
 
 ## Project Overview
 
-**ZKTeco Integration Tool** is a desktop application that bridges two systems:
-1. **ZKTeco Attendance Device** - Source of employee attendance/timesheet data (via PyZk library)
-2. **YAHSHUA Cloud Payroll** - Destination for syncing timesheet data
+**Attendance Sync** is a desktop application that bridges two systems:
+1. **ZKTeco Attendance Devices** - Source of employee attendance/timesheet data (via PyZk library)
+2. **Cloud Payroll Systems** - Destination for syncing timesheet data
 
-The app runs on the client's local machine, pulls data from ZKTeco device on the network, and pushes it to the cloud payroll system.
+The app runs on the client's local machine, pulls data from ZKTeco devices on the network, and pushes it to the cloud payroll system.
 
 ## Technology Stack
 

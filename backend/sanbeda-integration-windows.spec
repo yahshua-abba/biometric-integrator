@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# San Beda Integration Tool - PyInstaller Spec for Windows
+# Attendance Sync - PyInstaller Spec for Windows
 
 import sys
 from pathlib import Path
@@ -50,7 +50,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='SanBedaIntegration',
+    name='AttendanceSync',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

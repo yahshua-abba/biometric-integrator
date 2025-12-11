@@ -1,5 +1,5 @@
 """
-ZKTeco Integration Tool - Python-JavaScript Bridge
+Attendance Sync - Python-JavaScript Bridge
 Provides QWebChannel bridge for communication between PyQt6 and Vue.js
 """
 
@@ -498,9 +498,9 @@ class Bridge(QObject):
         return json.dumps({
             "success": True,
             "data": {
-                "name": "ZKTeco Integration Tool",
+                "name": "Attendance Sync",
                 "version": "1.0.0",
-                "description": "Bridge between ZKTeco device and cloud payroll"
+                "description": "Sync attendance data from ZKTeco devices to cloud payroll"
             }
         })
 

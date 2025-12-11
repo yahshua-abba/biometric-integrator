@@ -1,11 +1,11 @@
 #!/bin/bash
-# San Beda Integration Tool - DMG Installer Creator for macOS
+# Attendance Sync - DMG Installer Creator for macOS
 
 set -e
 
-APP_NAME="San Beda Integration"
+APP_NAME="Attendance Sync"
 VERSION="${1:-1.0.0}"  # Accept version as argument, default to 1.0.0
-DMG_NAME="SanBedaIntegration-v${VERSION}.dmg"
+DMG_NAME="AttendanceSync-v${VERSION}.dmg"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 

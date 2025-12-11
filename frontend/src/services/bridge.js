@@ -1,5 +1,5 @@
 /**
- * San Beda Integration Tool - Bridge Service
+ * Attendance Sync - Bridge Service
  * Handles communication with PyQt6 backend via QWebChannel
  */
 

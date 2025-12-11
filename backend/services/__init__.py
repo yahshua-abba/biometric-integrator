@@ -1,1 +1,1 @@
-"""San Beda Integration Tool - Services Module"""
+"""Attendance Sync - Services Module"""
