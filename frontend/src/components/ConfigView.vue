@@ -235,6 +235,16 @@
               class="input"
             />
           </div>
+          <div>
+            <label class="label">Comm Key (Password)</label>
+            <input
+              v-model.number="deviceForm.comm_key"
+              type="number"
+              placeholder="0"
+              class="input"
+            />
+            <p class="text-xs text-gray-500 mt-1">Leave as 0 if device has no password</p>
+          </div>
           <div v-if="editingDevice" class="flex items-center gap-2">
             <input
               type="checkbox"
@@ -401,6 +411,7 @@ const deviceForm = ref({
   name: '',
   ip: '',
   port: 4370,
+  comm_key: 0,
   enabled: true
 })
 
@@ -474,6 +485,7 @@ const openAddDeviceModal = () => {
     name: '',
     ip: '',
     port: 4370,
+    comm_key: 0,
     enabled: true
   }
   showDeviceModal.value = true
@@ -485,6 +497,7 @@ const editDevice = (device) => {
     name: device.name,
     ip: device.ip,
     port: device.port,
+    comm_key: device.comm_key || 0,
     enabled: !!device.enabled
   }
   showDeviceModal.value = true
@@ -505,6 +518,7 @@ const saveDevice = async () => {
         deviceForm.value.name,
         deviceForm.value.ip,
         deviceForm.value.port,
+        deviceForm.value.comm_key || 0,
         deviceForm.value.enabled
       )
       success('Device updated successfully')
@@ -513,7 +527,8 @@ const saveDevice = async () => {
       await bridgeService.addDevice(
         deviceForm.value.name,
         deviceForm.value.ip,
-        deviceForm.value.port
+        deviceForm.value.port,
+        deviceForm.value.comm_key || 0
       )
       success('Device added successfully')
     }

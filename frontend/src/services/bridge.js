@@ -174,12 +174,12 @@ class BridgeService {
     return this.call('getDevices')
   }
 
-  async addDevice(name, ip, port = 4370) {
-    return this.call('addDevice', name, ip, port)
+  async addDevice(name, ip, port = 4370, commKey = 0) {
+    return this.call('addDevice', name, ip, port, commKey)
   }
 
-  async updateDevice(deviceId, name, ip, port, enabled) {
-    return this.call('updateDevice', deviceId, name, ip, port, enabled)
+  async updateDevice(deviceId, name, ip, port, commKey, enabled) {
+    return this.call('updateDevice', deviceId, name, ip, port, commKey, enabled)
   }
 
   async deleteDevice(deviceId) {

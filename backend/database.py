@@ -151,6 +151,7 @@ class Database:
                     name TEXT NOT NULL,
                     ip TEXT NOT NULL,
                     port INTEGER DEFAULT 4370,
+                    comm_key INTEGER DEFAULT 0,
                     enabled BOOLEAN DEFAULT 1,
                     last_pull_at DATETIME,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -270,6 +271,12 @@ class Database:
             # Add deleted_at column to device table (for soft delete)
             try:
                 cursor.execute("ALTER TABLE device ADD COLUMN deleted_at DATETIME")
+            except:
+                pass  # Column already exists
+
+            # Add comm_key column to device table (for device communication password)
+            try:
+                cursor.execute("ALTER TABLE device ADD COLUMN comm_key INTEGER DEFAULT 0")
             except:
                 pass  # Column already exists
 
@@ -737,15 +744,15 @@ class Database:
         finally:
             conn.close()
 
-    def add_device(self, name, ip, port=4370):
+    def add_device(self, name, ip, port=4370, comm_key=0):
         """Add a new device"""
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
             cursor.execute("""
-                INSERT INTO device (name, ip, port, enabled)
-                VALUES (?, ?, ?, 1)
-            """, (name, ip, port))
+                INSERT INTO device (name, ip, port, comm_key, enabled)
+                VALUES (?, ?, ?, ?, 1)
+            """, (name, ip, port, comm_key or 0))
             conn.commit()
             return cursor.lastrowid
         except sqlite3.IntegrityError as e:
@@ -760,7 +767,7 @@ class Database:
         finally:
             conn.close()
 
-    def update_device(self, device_id, name=None, ip=None, port=None, enabled=None):
+    def update_device(self, device_id, name=None, ip=None, port=None, comm_key=None, enabled=None):
         """Update device configuration"""
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -776,6 +783,9 @@ class Database:
             if port is not None:
                 updates.append("port = ?")
                 values.append(port)
+            if comm_key is not None:
+                updates.append("comm_key = ?")
+                values.append(comm_key)
             if enabled is not None:
                 updates.append("enabled = ?")
                 values.append(1 if enabled else 0)

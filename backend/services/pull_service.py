@@ -25,20 +25,23 @@ class PullService:
         Args:
             device_id: If provided, get config for specific device from device table.
                       If None, falls back to legacy api_config (for backwards compatibility).
+
+        Returns:
+            tuple: (ip, port, comm_key, config)
         """
         if device_id is not None:
             device = self.database.get_device(device_id)
             if not device:
-                return None, None, None
-            return device.get('ip'), device.get('port', 4370), device
+                return None, None, None, None
+            return device.get('ip'), device.get('port', 4370), device.get('comm_key', 0), device
         else:
             # Legacy fallback to api_config
             config = self.database.get_api_config()
             if not config:
-                return None, None, None
+                return None, None, None, None
             ip = config.get('device_ip')
             port = config.get('device_port', 4370)
-            return ip, port, config
+            return ip, port, 0, config
 
     def connect(self, device_id=None):
         """Connect to ZKTeco device
@@ -47,14 +50,15 @@ class PullService:
             device_id: If provided, connect to specific device.
                       If None, uses legacy api_config.
         """
-        ip, port, _ = self.get_device_config(device_id)
+        ip, port, comm_key, _ = self.get_device_config(device_id)
 
         if not ip:
             raise Exception("Device IP not configured")
 
-        logger.info(f"Connecting to ZKTeco device at {ip}:{port}")
+        logger.info(f"Connecting to ZKTeco device at {ip}:{port} (comm_key: {comm_key or 0})")
 
-        self.zk = ZK(ip, port=port, timeout=10)
+        # Use comm_key (password) if set, otherwise use 0
+        self.zk = ZK(ip, port=port, timeout=30, password=comm_key or 0)
         self.conn = self.zk.connect()
         self.current_device_id = device_id
 
