@@ -10,10 +10,8 @@ import json
 
 logger = logging.getLogger(__name__)
 
-# YAHSHUA API endpoints
-YAHSHUA_BASE_URL = "https://yahshuapayroll.com/api"
-YAHSHUA_LOGIN_URL = f"{YAHSHUA_BASE_URL}/api-auth/"
-YAHSHUA_SYNC_URL = f"{YAHSHUA_BASE_URL}/sync-time-in-out/"
+# YAHSHUA API endpoints (default, can be overridden via config)
+DEFAULT_YAHSHUA_BASE_URL = "https://yahshuapayroll.com/api"
 
 
 class PushService:
@@ -27,6 +25,12 @@ class PushService:
             'Accept': 'application/json',
             'Content-Type': 'application/json'
         })
+
+    def get_base_url(self):
+        """Get the YAHSHUA API base URL from config or use default"""
+        config = self.database.get_api_config()
+        url = (config or {}).get('push_url') or DEFAULT_YAHSHUA_BASE_URL
+        return url.rstrip('/')
 
     def get_config(self):
         """Get push configuration from database"""
@@ -64,7 +68,9 @@ class PushService:
             }
 
             # YAHSHUA API requires credentials in both query params and body
-            auth_url = f"{YAHSHUA_LOGIN_URL}?username={username}&password={password}"
+            base_url = self.get_base_url()
+            login_url = f"{base_url}/api-auth/"
+            auth_url = f"{login_url}?username={username}&password={password}"
 
             response = self.session.post(
                 auth_url,
@@ -343,11 +349,14 @@ class PushService:
                 "log_list": log_list
             }
 
+            base_url = self.get_base_url()
+            sync_url = f"{base_url}/sync-time-in-out/"
+
             logger.info(f"Pushing {len(log_list)} logs to YAHSHUA")
             logger.debug(f"Payload: {json.dumps(payload, indent=2)}")
 
             response = self.session.post(
-                YAHSHUA_SYNC_URL,
+                sync_url,
                 headers=headers,
                 json=payload,
                 timeout=60
@@ -374,7 +383,7 @@ class PushService:
                 # Retry once with new token
                 headers['Authorization'] = f'Token {new_token}'
                 retry_response = self.session.post(
-                    YAHSHUA_SYNC_URL,
+                    sync_url,
                     headers=headers,
                     json=payload,
                     timeout=60

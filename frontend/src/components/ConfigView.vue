@@ -12,6 +12,20 @@
       </h2>
 
       <div class="space-y-4">
+        <!-- API URL -->
+        <div>
+          <label class="label">API URL</label>
+          <input
+            v-model="form.push_url"
+            type="url"
+            placeholder="https://yahshuapayroll.com/api"
+            class="input"
+          />
+          <p class="text-sm text-gray-500 mt-1">
+            YAHSHUA Payroll API endpoint. Change only if directed by your administrator.
+          </p>
+        </div>
+
         <!-- Logged In State -->
         <div v-if="pushLoggedIn">
           <div class="bg-green-50 border border-green-200 rounded-lg p-4">
@@ -321,6 +335,67 @@
       </button>
     </div>
 
+    <!-- Updates Section (hidden for now) -->
+    <div v-if="false" class="card">
+      <h2 class="text-xl font-semibold mb-4 flex items-center gap-2">
+        <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+        </svg>
+        Updates
+      </h2>
+
+      <div class="space-y-4">
+        <div class="flex items-center gap-4">
+          <span class="text-sm text-gray-600">Current version: <strong>{{ currentVersion }}</strong></span>
+          <span v-if="latestVersion && updateAvailable" class="text-sm text-blue-600">
+            Latest version: <strong>{{ latestVersion }}</strong>
+          </span>
+          <span v-if="latestVersion && !updateAvailable" class="text-sm text-green-600">
+            You're up to date
+          </span>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <button
+            @click="checkUpdates"
+            :disabled="checkingUpdates"
+            class="btn btn-secondary"
+          >
+            <span v-if="!checkingUpdates">Check for Updates</span>
+            <span v-else>Checking...</span>
+          </button>
+
+          <button
+            v-if="updateAvailable && updateDownloadUrl"
+            @click="startDownload"
+            :disabled="downloading"
+            class="btn btn-primary"
+          >
+            <span v-if="!downloading">Download Update</span>
+            <span v-else>Downloading...</span>
+          </button>
+        </div>
+
+        <!-- Download progress -->
+        <div v-if="downloading || downloadComplete" class="space-y-2">
+          <div class="w-full bg-gray-200 rounded-full h-3">
+            <div
+              class="h-3 rounded-full transition-all duration-300"
+              :class="downloadComplete ? 'bg-green-500' : 'bg-blue-500'"
+              :style="{ width: downloadPercent + '%' }"
+            ></div>
+          </div>
+          <p class="text-sm text-gray-600">
+            <span v-if="downloadComplete">Download complete: {{ downloadSavePath }}</span>
+            <span v-else-if="downloadError" class="text-red-600">{{ downloadError }}</span>
+            <span v-else>{{ downloadedMb }} / {{ totalMb }} MB ({{ downloadPercent }}%)</span>
+          </p>
+        </div>
+
+        <p v-if="updateError" class="text-sm text-red-600">{{ updateError }}</p>
+      </div>
+    </div>
+
     <!-- Log Modal -->
     <div v-if="showLogModal" class="fixed inset-0 z-50 flex items-center justify-center">
       <div class="absolute inset-0 bg-black bg-opacity-50" @click="closeLogModal"></div>
@@ -374,14 +449,17 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import bridgeService from '../services/bridge'
 import { useToast } from '../composables/useToast'
 
 const { success, error, info } = useToast()
 
+const DEFAULT_PUSH_URL = 'https://yahshuapayroll.com/api'
+
 const form = ref({
   pull_interval_minutes: 30,
+  push_url: DEFAULT_PUSH_URL,
   push_username: '',
   push_password: '',
   push_interval_minutes: 15
@@ -401,9 +479,10 @@ const debouncedSave = () => {
   }, 500)
 }
 
-// Auto-save when intervals change
+// Auto-save when intervals or URL change
 watch(() => form.value.pull_interval_minutes, debouncedSave)
 watch(() => form.value.push_interval_minutes, debouncedSave)
+watch(() => form.value.push_url, debouncedSave)
 
 // YAHSHUA login state
 const pushLoggedIn = ref(false)
@@ -430,6 +509,21 @@ const deviceForm = ref({
   enabled: true
 })
 
+// Update state
+const currentVersion = ref('')
+const latestVersion = ref('')
+const updateAvailable = ref(false)
+const updateDownloadUrl = ref('')
+const checkingUpdates = ref(false)
+const downloading = ref(false)
+const downloadComplete = ref(false)
+const downloadPercent = ref(0)
+const downloadedMb = ref(0)
+const totalMb = ref(0)
+const downloadSavePath = ref('')
+const downloadError = ref('')
+const updateError = ref('')
+
 // System logs state
 const showLogModal = ref(false)
 const logFiles = ref([])
@@ -445,6 +539,7 @@ const loadConfig = async () => {
     if (result.data) {
       form.value = {
         pull_interval_minutes: result.data.pull_interval_minutes || 30,
+        push_url: result.data.push_url || DEFAULT_PUSH_URL,
         push_username: result.data.push_username || '',
         push_password: '',  // Never prefill password
         push_interval_minutes: result.data.push_interval_minutes || 15
@@ -725,8 +820,91 @@ const downloadLog = () => {
   URL.revokeObjectURL(url)
 }
 
+// Update functions
+const checkUpdates = async () => {
+  checkingUpdates.value = true
+  updateError.value = ''
+  downloadComplete.value = false
+  downloadError.value = ''
+  try {
+    const result = await bridgeService.checkForUpdates()
+    if (result.success && result.data) {
+      latestVersion.value = result.data.latest_version
+      updateAvailable.value = result.data.update_available
+      updateDownloadUrl.value = result.data.download_url || ''
+      if (!result.data.update_available) {
+        info('You are running the latest version')
+      } else {
+        info(`Update available: v${result.data.latest_version}`)
+      }
+    }
+  } catch (err) {
+    updateError.value = err.message
+    error(`Failed to check for updates: ${err.message}`)
+  } finally {
+    checkingUpdates.value = false
+  }
+}
+
+const startDownload = async () => {
+  downloading.value = true
+  downloadComplete.value = false
+  downloadPercent.value = 0
+  downloadedMb.value = 0
+  totalMb.value = 0
+  downloadSavePath.value = ''
+  downloadError.value = ''
+
+  // Download to user's Downloads folder
+  const saveDir = '~/Downloads'
+
+  try {
+    await bridgeService.downloadUpdate(saveDir)
+  } catch (err) {
+    downloading.value = false
+    downloadError.value = err.message
+    error(`Download failed: ${err.message}`)
+  }
+}
+
+// Listen for download progress
+const onUpdateDownloadProgress = (event) => {
+  const data = event.detail
+  if (data.error) {
+    downloading.value = false
+    downloadError.value = data.error
+    error(`Download failed: ${data.error}`)
+    return
+  }
+  downloadPercent.value = data.percent || 0
+  downloadedMb.value = data.downloaded_mb || 0
+  totalMb.value = data.total_mb || 0
+  if (data.completed) {
+    downloading.value = false
+    downloadComplete.value = true
+    downloadSavePath.value = data.save_path || ''
+    success('Update downloaded successfully')
+  }
+}
+
 onMounted(async () => {
   await bridgeService.whenReady()
   await loadConfig()
+
+  // Load current version
+  try {
+    const appInfo = await bridgeService.getAppInfo()
+    if (appInfo.data) {
+      currentVersion.value = appInfo.data.version
+    }
+  } catch (err) {
+    console.error('Error loading app info:', err)
+  }
+
+  window.addEventListener('updateDownloadProgress', onUpdateDownloadProgress)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('updateDownloadProgress', onUpdateDownloadProgress)
 })
 </script>

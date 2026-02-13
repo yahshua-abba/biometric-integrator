@@ -62,6 +62,12 @@ class BridgeService {
       const result = JSON.parse(resultJson)
       window.dispatchEvent(new CustomEvent('syncCompleted', { detail: result }))
     })
+
+    // Listen for update download progress
+    this.bridge.updateDownloadProgress.connect((progressJson) => {
+      const progress = JSON.parse(progressJson)
+      window.dispatchEvent(new CustomEvent('updateDownloadProgress', { detail: progress }))
+    })
   }
 
   /**
@@ -204,6 +210,16 @@ class BridgeService {
 
   async triggerCleanup() {
     return this.call('triggerCleanup')
+  }
+
+  // ==================== UPDATE METHODS ====================
+
+  async checkForUpdates() {
+    return this.call('checkForUpdates')
+  }
+
+  async downloadUpdate(saveDirectory) {
+    return this.call('downloadUpdate', saveDirectory)
   }
 
   // ==================== SYSTEM LOG METHODS ====================

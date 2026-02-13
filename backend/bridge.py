@@ -28,6 +28,7 @@ class Bridge(QObject):
     syncStatusUpdated = pyqtSignal(str)  # Emits JSON string with sync status
     syncProgressUpdated = pyqtSignal(str)  # Emits JSON string with progress
     syncCompleted = pyqtSignal(str)  # Emits JSON string with results
+    updateDownloadProgress = pyqtSignal(str)  # Emits JSON string with download progress
 
     def __init__(self, database, pull_service, push_service, scheduler=None):
         super().__init__()
@@ -522,6 +523,76 @@ class Bridge(QObject):
                 return json.dumps({"success": False, "error": "Scheduler not initialized"})
         except Exception as e:
             logger.error(f"Error triggering cleanup: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
+    # ==================== UPDATE METHODS ====================
+
+    @pyqtSlot(result=str)
+    def checkForUpdates(self):
+        """Check GitHub Releases for a newer version"""
+        try:
+            from services.update_service import check_for_updates
+
+            app_info = json.loads(self.getAppInfo())
+            current_version = app_info["data"]["version"]
+
+            result = check_for_updates(current_version)
+            return json.dumps({"success": True, "data": result})
+        except Exception as e:
+            logger.error(f"Error checking for updates: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
+    @pyqtSlot(str, result=str)
+    def downloadUpdate(self, save_directory):
+        """Download the latest update asset to the specified directory"""
+        try:
+            from services.update_service import check_for_updates, download_update
+
+            app_info = json.loads(self.getAppInfo())
+            current_version = app_info["data"]["version"]
+
+            update_info = check_for_updates(current_version)
+
+            if not update_info["update_available"]:
+                return json.dumps({"success": False, "error": "No update available"})
+
+            if not update_info["download_url"]:
+                return json.dumps({"success": False, "error": "No download available for this platform"})
+
+            expanded_dir = os.path.expanduser(save_directory)
+            os.makedirs(expanded_dir, exist_ok=True)
+            save_path = os.path.join(expanded_dir, update_info["asset_name"])
+
+            def on_progress(percent, downloaded_mb, total_mb):
+                self.updateDownloadProgress.emit(json.dumps({
+                    "percent": percent,
+                    "downloaded_mb": downloaded_mb,
+                    "total_mb": total_mb
+                }))
+
+            # Run download in background thread
+            def run_download():
+                try:
+                    download_update(update_info["download_url"], save_path, on_progress)
+                    self.updateDownloadProgress.emit(json.dumps({
+                        "percent": 100,
+                        "downloaded_mb": round(update_info["asset_size"] / (1024 * 1024), 1),
+                        "total_mb": round(update_info["asset_size"] / (1024 * 1024), 1),
+                        "completed": True,
+                        "save_path": save_path
+                    }))
+                except Exception as e:
+                    logger.error(f"Error downloading update: {e}")
+                    self.updateDownloadProgress.emit(json.dumps({
+                        "error": str(e)
+                    }))
+
+            thread = threading.Thread(target=run_download, daemon=True)
+            thread.start()
+
+            return json.dumps({"success": True, "message": "Download started"})
+        except Exception as e:
+            logger.error(f"Error starting update download: {e}")
             return json.dumps({"success": False, "error": str(e)})
 
     def emit_sync_status(self, status_dict):
