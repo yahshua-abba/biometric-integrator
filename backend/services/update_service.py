@@ -75,6 +75,41 @@ def check_for_updates(current_version):
         raise Exception(f"Failed to check for updates: {e}")
 
 
+GITHUB_ALL_RELEASES_URL = "https://api.github.com/repos/ysc-payroll/integrator_sanbeda_taytay/releases"
+MIN_RELEASE_VERSION = (1, 0, 15)
+
+
+def get_all_releases():
+    """Fetch GitHub releases starting from v1.0.15 onwards.
+
+    Returns:
+        list of dicts with tag_name, name, body, published_at, html_url
+    """
+    try:
+        resp = requests.get(GITHUB_ALL_RELEASES_URL, timeout=15)
+        resp.raise_for_status()
+        releases = resp.json()
+
+        result = []
+        for release in releases:
+            tag = release.get("tag_name", "")
+            if parse_version(tag) < MIN_RELEASE_VERSION:
+                continue
+            result.append({
+                "tag_name": tag,
+                "name": release.get("name", "") or tag,
+                "body": release.get("body", ""),
+                "published_at": release.get("published_at", ""),
+                "html_url": release.get("html_url", ""),
+            })
+
+        return result
+
+    except requests.RequestException as e:
+        logger.error(f"Error fetching releases: {e}")
+        raise Exception(f"Failed to fetch releases: {e}")
+
+
 def download_update(download_url, save_path, progress_callback=None):
     """Download an update asset with progress tracking.
 

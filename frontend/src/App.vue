@@ -5,8 +5,8 @@
       <div class="flex flex-col h-full">
         <!-- Logo/Title -->
         <div class="p-6 bg-primary-600 text-white">
-          <h1 class="text-xl font-bold">ZKTeco</h1>
-          <p class="text-sm text-primary-100">Integration Tool</p>
+          <h1 class="text-xl font-bold">Biometrics</h1>
+          <p class="text-sm text-primary-100">Integration Sync Tool</p>
         </div>
 
         <!-- Navigation -->
@@ -30,7 +30,7 @@
         <!-- App Info -->
         <div class="p-4 border-t text-xs text-gray-500">
           <div>Version {{ appVersion }}</div>
-          <div>© 2025 The Abba</div>
+          <div>© {{ new Date().getFullYear() }} The ABBA Initiative, OPC</div>
         </div>
       </div>
     </div>
@@ -51,11 +51,13 @@ import DashboardView from './components/DashboardView.vue'
 import TimesheetView from './components/TimesheetView.vue'
 import ConfigView from './components/ConfigView.vue'
 import LogsView from './components/LogsView.vue'
+import UpdatesView from './components/UpdatesView.vue'
+import HelpView from './components/HelpView.vue'
 import ToastNotification from './components/ToastNotification.vue'
 import bridgeService from './services/bridge'
 
 const currentView = ref('dashboard')
-const appVersion = ref('1.0.6')
+const appVersion = ref('1.0.15')
 
 // Icon components (SVG)
 const DashboardIcon = () => h('svg', { fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24' }, [
@@ -75,11 +77,21 @@ const LogsIcon = () => h('svg', { fill: 'none', stroke: 'currentColor', viewBox:
   h('path', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '2', d: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' })
 ])
 
+const UpdatesIcon = () => h('svg', { fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24' }, [
+  h('path', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '2', d: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4' })
+])
+
+const HelpIcon = () => h('svg', { fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24' }, [
+  h('path', { 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'stroke-width': '2', d: 'M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z' })
+])
+
 const views = [
   { id: 'dashboard', label: 'Dashboard', icon: DashboardIcon, component: DashboardView },
   { id: 'timesheets', label: 'Timesheets', icon: TimesheetIcon, component: TimesheetView },
   { id: 'config', label: 'Configuration', icon: ConfigIcon, component: ConfigView },
-  { id: 'logs', label: 'Logs', icon: LogsIcon, component: LogsView }
+  { id: 'logs', label: 'Logs', icon: LogsIcon, component: LogsView },
+  { id: 'updates', label: 'Updates', icon: UpdatesIcon, component: UpdatesView },
+  { id: 'help', label: 'Help & FAQ', icon: HelpIcon, component: HelpView }
 ]
 
 const currentViewComponent = computed(() => {

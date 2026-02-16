@@ -543,6 +543,18 @@ class Bridge(QObject):
             logger.error(f"Error checking for updates: {e}")
             return json.dumps({"success": False, "error": str(e)})
 
+    @pyqtSlot(result=str)
+    def getAllReleases(self):
+        """Fetch all GitHub releases"""
+        try:
+            from services.update_service import get_all_releases
+
+            releases = get_all_releases()
+            return json.dumps({"success": True, "data": releases})
+        except Exception as e:
+            logger.error(f"Error fetching releases: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
     @pyqtSlot(str, result=str)
     def downloadUpdate(self, save_directory):
         """Download the latest update asset to the specified directory"""

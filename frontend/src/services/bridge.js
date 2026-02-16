@@ -218,6 +218,10 @@ class BridgeService {
     return this.call('checkForUpdates')
   }
 
+  async getAllReleases() {
+    return this.call('getAllReleases')
+  }
+
   async downloadUpdate(saveDirectory) {
     return this.call('downloadUpdate', saveDirectory)
   }
