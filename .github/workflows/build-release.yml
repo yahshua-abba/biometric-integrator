@@ -45,6 +45,11 @@ jobs:
           pip install pyinstaller
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
+      - name: Write VERSION file
+        working-directory: ./backend
+        run: |
+          echo "${GITHUB_REF_NAME#v}" > VERSION
+
       - name: Build macOS app with PyInstaller
         working-directory: ./backend
         run: |
@@ -67,6 +72,14 @@ jobs:
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload DMG to S3
+        run: |
+          aws s3 cp dist/BiometricIntegration-*.dmg s3://yp-files/biometrics-integration/biometric-integration.dmg
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ap-southeast-1
 
   build-windows:
     name: Build Windows EXE
@@ -110,6 +123,12 @@ jobs:
           pip install pyinstaller
           pip install -r requirements.txt
 
+      - name: Write VERSION file
+        working-directory: ./backend
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          Set-Content -Path VERSION -Value $version -NoNewline
+
       - name: Build Windows EXE with PyInstaller
         working-directory: ./backend
         run: |
@@ -129,3 +148,11 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Windows ZIP to S3
+        run: |
+          aws s3 cp (Get-ChildItem dist/BiometricIntegration-*.zip).FullName s3://yp-files/biometrics-integration/biometric-integration.zip
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ap-southeast-1

@@ -13,6 +13,62 @@ logger = logging.getLogger(__name__)
 # YAHSHUA API endpoints (default, can be overridden via config)
 DEFAULT_YAHSHUA_BASE_URL = "https://yahshuapayroll.com/api"
 
+# User-friendly messages for YAHSHUA error codes
+YAHSHUA_ERROR_MESSAGES = {
+    100: "Invalid request format",
+    101: "Missing required field",
+    102: "Invalid date format",
+    103: "Invalid time format",
+    110: "Invalid employee code",
+    120: "Duplicate record already exists",
+    130: "Branch not found",
+    140: "Employee not found in payroll system",
+    141: "Employee is inactive",
+    142: "Employee not assigned to branch",
+    143: "Employee not recognized in payroll system",
+    150: "Invalid log type",
+    160: "Record outside allowed date range",
+    200: "Server processing error",
+    500: "Payroll server internal error",
+}
+
+# User-friendly messages for HTTP status codes
+HTTP_ERROR_MESSAGES = {
+    400: "Bad request - the data sent was invalid",
+    401: "Authentication expired - please log in again",
+    403: "Access denied - insufficient permissions",
+    404: "Payroll API endpoint not found - check your URL configuration",
+    408: "Request timed out - the server took too long to respond",
+    429: "Too many requests - please wait before trying again",
+    500: "Payroll server error - please try again later",
+    502: "Payroll server is temporarily unavailable",
+    503: "Payroll service is under maintenance",
+    504: "Payroll server timed out",
+}
+
+
+def get_friendly_yahshua_error(error_code, reason):
+    """Get a user-friendly error message for a YAHSHUA error code"""
+    friendly = YAHSHUA_ERROR_MESSAGES.get(error_code)
+    if friendly:
+        return friendly
+    # Fall back to the reason from the API if no mapping exists
+    if reason and reason != 'Unknown error':
+        return reason
+    return f"Sync failed (error code {error_code})"
+
+
+def get_friendly_http_error(status_code):
+    """Get a user-friendly error message for an HTTP status code"""
+    friendly = HTTP_ERROR_MESSAGES.get(status_code)
+    if friendly:
+        return friendly
+    if 400 <= status_code < 500:
+        return f"Request error ({status_code}) - check your configuration"
+    if 500 <= status_code < 600:
+        return f"Payroll server error ({status_code}) - please try again later"
+    return f"Unexpected response from payroll server ({status_code})"
+
 
 class PushService:
     """Service for pushing data to YAHSHUA Payroll cloud system"""
@@ -70,10 +126,10 @@ class PushService:
             # YAHSHUA API requires credentials in both query params and body
             base_url = self.get_base_url()
             login_url = f"{base_url}/api-auth/"
-            auth_url = f"{login_url}?username={username}&password={password}"
 
             response = self.session.post(
-                auth_url,
+                login_url,
+                params={"username": username, "password": password},
                 json=payload,
                 timeout=30
             )
@@ -100,15 +156,16 @@ class PushService:
             elif response.status_code == 401:
                 error_data = response.json()
                 error_msg = error_data.get('message', 'Invalid credentials')
-                raise Exception(f"Authentication failed: {error_msg}")
+                raise Exception(f"Login failed: {error_msg}")
 
             else:
-                raise Exception(f"Authentication failed: HTTP {response.status_code}")
+                friendly = get_friendly_http_error(response.status_code)
+                raise Exception(f"Login failed: {friendly}")
 
         except requests.exceptions.Timeout:
-            raise Exception("Authentication timeout: YAHSHUA server not responding")
+            raise Exception("Login timed out - the payroll server is not responding")
         except requests.exceptions.ConnectionError:
-            raise Exception("Connection error: Cannot reach YAHSHUA server")
+            raise Exception("Cannot connect to the payroll server - check your internet connection and URL")
         except Exception as e:
             logger.error(f"YAHSHUA authentication error: {e}")
             raise
@@ -258,10 +315,10 @@ class PushService:
                         reason = failed_log.get('reason', 'Unknown error')
                         error_code = failed_log.get('error_code', 0)
 
-                        error_msg = f"YAHSHUA Error (code {error_code}): {reason}"
-                        self.database.mark_timesheet_sync_failed(local_id, error_msg)
+                        friendly_msg = get_friendly_yahshua_error(error_code, reason)
+                        self.database.mark_timesheet_sync_failed(local_id, friendly_msg)
                         stats['failed'] += 1
-                        logger.warning(f"Timesheet {local_id} failed: {error_msg}")
+                        logger.warning(f"Timesheet {local_id} failed (code {error_code}): {reason} -> {friendly_msg}")
 
                     stats['batches_completed'] += 1
                     logger.info(f"Batch {batch_num} completed: {len(logs_synced)} synced, {len(logs_failed)} failed")
@@ -275,7 +332,7 @@ class PushService:
                     for log_entry in batch:
                         self.database.mark_timesheet_sync_failed(
                             log_entry['id'],
-                            f"Batch {batch_num} failed: {batch_error}"
+                            batch_error
                         )
                         stats['failed'] += 1
 
@@ -307,11 +364,13 @@ class PushService:
 
             # Build message
             if batch_error:
-                message = f"Push stopped at batch {stats['batches_completed'] + 1}/{stats['batches_total']}: {batch_error}. {stats['success']} synced, {stats['failed']} failed"
+                message = f"Push failed: {batch_error}"
+                if stats['success'] > 0:
+                    message += f" ({stats['success']} synced before error, {stats['failed']} failed)"
             elif stats['failed'] > 0:
-                message = f"Push completed ({stats['batches_completed']}/{stats['batches_total']} batches): {stats['success']} success, {stats['failed']} failed"
+                message = f"Push completed with errors: {stats['success']} synced, {stats['failed']} failed"
             else:
-                message = f"Push completed ({stats['batches_completed']} batches): {stats['success']} records synced"
+                message = f"Push completed: {stats['success']} records synced successfully"
 
             logger.info(message)
             return batch_error is None, message, stats
@@ -390,15 +449,19 @@ class PushService:
                 )
                 if retry_response.status_code == 200:
                     return True, retry_response.json()
-                return False, {'error': f'Authentication failed after retry: HTTP {retry_response.status_code}'}
+                friendly = get_friendly_http_error(retry_response.status_code)
+                logger.error(f"Retry after re-auth failed: HTTP {retry_response.status_code}")
+                return False, {'error': f'Authentication failed after retry: {friendly}'}
 
             else:
-                return False, {'error': f'HTTP {response.status_code}: {response.text[:200]}'}
+                friendly = get_friendly_http_error(response.status_code)
+                logger.error(f"Push batch failed: HTTP {response.status_code} - {response.text[:200]}")
+                return False, {'error': friendly}
 
         except requests.exceptions.Timeout:
-            return False, {'error': 'Request timeout'}
+            return False, {'error': 'Request timed out - the payroll server took too long to respond'}
         except requests.exceptions.ConnectionError:
-            return False, {'error': 'Connection error'}
+            return False, {'error': 'Cannot connect to the payroll server - check your internet connection'}
         except Exception as e:
             return False, {'error': str(e)}
 

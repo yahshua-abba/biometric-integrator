@@ -74,3 +74,6 @@ logs/
 *.dmg
 *.exe
 *.app/
+
+# Generated version file (written by CI from git tag)
+backend/VERSION

@@ -222,6 +222,10 @@ class BridgeService {
     return this.call('downloadUpdate', saveDirectory)
   }
 
+  async openDownloadedUpdate(filePath) {
+    return this.call('openDownloadedUpdate', filePath)
+  }
+
   // ==================== SYSTEM LOG METHODS ====================
 
   async getSystemLogFiles() {

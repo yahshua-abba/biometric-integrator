@@ -11,6 +11,12 @@ backend_path = Path(SPECPATH)
 project_path = backend_path.parent
 frontend_dist = project_path / 'frontend' / 'dist'
 
+# Read version from VERSION file (written by CI)
+version_file = backend_path / 'VERSION'
+app_version = '0.0.0'
+if version_file.exists():
+    app_version = version_file.read_text().strip()
+
 a = Analysis(
     ['main.py'],
     pathex=[str(backend_path)],
@@ -18,6 +24,8 @@ a = Analysis(
     datas=[
         # Include frontend dist files
         (str(frontend_dist), 'frontend/dist'),
+        # Include VERSION file for runtime version detection
+        (str(backend_path / 'VERSION'), '.'),
     ],
     hiddenimports=[
         'PyQt6.QtCore',

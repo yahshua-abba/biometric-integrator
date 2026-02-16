@@ -2,13 +2,13 @@
   <div class="p-6 space-y-6">
     <h1 class="text-3xl font-bold text-gray-900">Configuration</h1>
 
-    <!-- Push Configuration (YAHSHUA Payroll) - First -->
+    <!-- Push Configuration (Payroll API) - First -->
     <div class="card">
       <h2 class="text-xl font-semibold mb-4 flex items-center gap-2">
         <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
         </svg>
-        Push Configuration (YAHSHUA Payroll)
+        Push Configuration
       </h2>
 
       <div class="space-y-4">
@@ -22,7 +22,7 @@
             class="input"
           />
           <p class="text-sm text-gray-500 mt-1">
-            YAHSHUA Payroll API endpoint. Change only if directed by your administrator.
+            Payroll API endpoint. Change only if directed by your administrator.
           </p>
         </div>
 
@@ -33,7 +33,7 @@
               <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
-              <span class="font-semibold text-green-800">Connected to YAHSHUA Payroll</span>
+              <span class="font-semibold text-green-800">Connected to Payroll System</span>
             </div>
             <p class="text-green-800">
               Logged in as <strong>{{ pushUserLogged }}</strong><br/>
@@ -72,7 +72,7 @@
         <div v-else>
           <div class="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
             <p class="text-sm text-gray-600">
-              <strong>YAHSHUA Payroll API</strong><br/>
+              <strong>Payroll API</strong><br/>
               Login to connect and sync timesheet data.
             </p>
           </div>
@@ -271,7 +271,7 @@
               placeholder="e.g., BRANCH001"
               class="input"
             />
-            <p class="text-xs text-gray-500 mt-1">Branch identifier for YAHSHUA Payroll (optional)</p>
+            <p class="text-xs text-gray-500 mt-1">Branch identifier for Payroll system (optional)</p>
           </div>
           <div v-if="editingDevice" class="flex items-center gap-2">
             <input
@@ -335,8 +335,8 @@
       </button>
     </div>
 
-    <!-- Updates Section (hidden for now) -->
-    <div v-if="false" class="card">
+    <!-- Updates Section -->
+    <div class="card">
       <h2 class="text-xl font-semibold mb-4 flex items-center gap-2">
         <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -385,10 +385,34 @@
               :style="{ width: downloadPercent + '%' }"
             ></div>
           </div>
+          <p v-if="!downloadComplete && !downloadError" class="text-sm text-gray-600">
+            {{ downloadedMb }} / {{ totalMb }} MB ({{ downloadPercent }}%)
+          </p>
+          <p v-if="downloadError" class="text-sm text-red-600">{{ downloadError }}</p>
+        </div>
+
+        <!-- Install prompt after download -->
+        <div v-if="downloadComplete" class="bg-green-50 border border-green-200 rounded-lg p-4 space-y-3">
+          <div class="flex items-center gap-2 text-green-700 font-medium">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Download complete
+          </div>
           <p class="text-sm text-gray-600">
-            <span v-if="downloadComplete">Download complete: {{ downloadSavePath }}</span>
-            <span v-else-if="downloadError" class="text-red-600">{{ downloadError }}</span>
-            <span v-else>{{ downloadedMb }} / {{ totalMb }} MB ({{ downloadPercent }}%)</span>
+            Saved to: <span class="font-mono text-xs">{{ downloadSavePath }}</span>
+          </p>
+          <button
+            @click="installUpdate"
+            class="btn btn-primary flex items-center gap-2"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+            </svg>
+            Install Update
+          </button>
+          <p class="text-xs text-gray-500">
+            This will open the installer. The app will need to be restarted after installation.
           </p>
         </div>
 
@@ -484,7 +508,7 @@ watch(() => form.value.pull_interval_minutes, debouncedSave)
 watch(() => form.value.push_interval_minutes, debouncedSave)
 watch(() => form.value.push_url, debouncedSave)
 
-// YAHSHUA login state
+// Payroll login state
 const pushLoggedIn = ref(false)
 const pushUserLogged = ref('')
 const pushTokenCreatedAt = ref('')
@@ -545,7 +569,7 @@ const loadConfig = async () => {
         push_interval_minutes: result.data.push_interval_minutes || 15
       }
 
-      // Set YAHSHUA login state
+      // Set Payroll login state
       pushLoggedIn.value = result.data.push_token_exists || false
       pushUserLogged.value = result.data.push_user_logged || ''
       pushTokenCreatedAt.value = result.data.push_token_created_at || ''
@@ -864,6 +888,19 @@ const startDownload = async () => {
     downloading.value = false
     downloadError.value = err.message
     error(`Download failed: ${err.message}`)
+  }
+}
+
+const installUpdate = async () => {
+  try {
+    const result = await bridgeService.openDownloadedUpdate(downloadSavePath.value)
+    if (result.success) {
+      info('Installer opened. Please follow the installation steps, then restart the app.')
+    } else {
+      error(`Could not open installer: ${result.error}`)
+    }
+  } catch (err) {
+    error(`Could not open installer: ${err.message}`)
   }
 }
 

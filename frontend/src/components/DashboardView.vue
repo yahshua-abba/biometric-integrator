@@ -417,7 +417,7 @@ onMounted(async () => {
       if (data.result.success) {
         success(data.result.message)
       } else {
-        error(data.result.error || 'Pull sync failed')
+        error(data.result.message || data.result.error || 'Pull sync failed')
       }
     }
 
@@ -429,7 +429,7 @@ onMounted(async () => {
       if (data.result.success) {
         success(data.result.message)
       } else {
-        error(data.result.error || 'Push sync failed')
+        error(data.result.message || data.result.error || 'Push sync failed')
       }
     }
 

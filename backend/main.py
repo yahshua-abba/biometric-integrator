@@ -48,6 +48,8 @@ early_log("=" * 60)
 # NATIVE SPLASH SCREEN - Show before heavy imports using Tkinter
 # =============================================================================
 
+from version import APP_VERSION
+
 _tk_root = None
 _tk_splash = None
 
@@ -110,7 +112,7 @@ def show_native_splash():
             # Version
             version_label = tk.Label(
                 _tk_root,
-                text="Version 1.0.0",
+                text=f"Version {APP_VERSION}",
                 font=("Arial", 9),
                 fg="#60a5fa",
                 bg="#1e40af"
@@ -249,7 +251,7 @@ def create_splash_pixmap():
     font = QFont("Arial", 9)
     painter.setFont(font)
     painter.setPen(QColor("#60a5fa"))
-    painter.drawText(pixmap.rect().adjusted(0, 200, 0, 0), Qt.AlignmentFlag.AlignHCenter, "Version 1.0.0")
+    painter.drawText(pixmap.rect().adjusted(0, 200, 0, 0), Qt.AlignmentFlag.AlignHCenter, f"Version {APP_VERSION}")
 
     painter.end()
     return pixmap
@@ -510,7 +512,7 @@ class IntegrationApp:
         QMessageBox.about(
             self.main_window,
             "About Biometric Integration",
-            "Biometric Integration v1.0.0\n\n"
+            f"Biometric Integration v{APP_VERSION}\n\n"
             "Sync attendance data from ZKTeco devices\n"
             "to cloud payroll systems.\n\n"
             "© 2025 The Abba. All rights reserved."

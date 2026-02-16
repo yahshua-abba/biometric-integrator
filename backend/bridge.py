@@ -11,6 +11,7 @@ import sys
 import tempfile
 from datetime import datetime
 import threading
+from version import APP_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -502,7 +503,7 @@ class Bridge(QObject):
             "success": True,
             "data": {
                 "name": "Biometric Integration",
-                "version": "1.0.0",
+                "version": APP_VERSION,
                 "description": "Sync attendance data from ZKTeco devices to cloud payroll"
             }
         })
@@ -593,6 +594,29 @@ class Bridge(QObject):
             return json.dumps({"success": True, "message": "Download started"})
         except Exception as e:
             logger.error(f"Error starting update download: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
+    @pyqtSlot(str, result=str)
+    def openDownloadedUpdate(self, file_path):
+        """Open the downloaded update file with the OS default handler"""
+        try:
+            import subprocess
+            expanded_path = os.path.expanduser(file_path)
+
+            if not os.path.exists(expanded_path):
+                return json.dumps({"success": False, "error": "File not found"})
+
+            if sys.platform == 'darwin':
+                subprocess.Popen(['open', expanded_path])
+            elif sys.platform == 'win32':
+                os.startfile(expanded_path)
+            else:
+                subprocess.Popen(['xdg-open', expanded_path])
+
+            logger.info(f"Opened update file: {expanded_path}")
+            return json.dumps({"success": True})
+        except Exception as e:
+            logger.error(f"Error opening update file: {e}")
             return json.dumps({"success": False, "error": str(e)})
 
     def emit_sync_status(self, status_dict):
