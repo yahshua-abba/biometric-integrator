@@ -106,6 +106,7 @@ class PushService:
         Args:
             username: Optional username (uses config if not provided)
             password: Optional password (uses config if not provided)
+            from_biometrics: Whether this is from biometrics (default: True)
 
         Returns:
             dict: Authentication response with token, user_logged, company_name
@@ -120,7 +121,8 @@ class PushService:
 
             payload = {
                 "username": username,
-                "password": password
+                "password": password,
+                "from_biometrics": True
             }
 
             # YAHSHUA API requires credentials in both query params and body
