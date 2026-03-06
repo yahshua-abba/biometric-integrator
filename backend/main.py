@@ -149,6 +149,7 @@ show_native_splash()
 try:
     early_log("Importing standard libraries...")
     import logging
+    from logging.handlers import RotatingFileHandler
     from pathlib import Path
     from http.server import HTTPServer, SimpleHTTPRequestHandler
     import threading
@@ -191,7 +192,12 @@ logging.basicConfig(
     level=logging.DEBUG if not IS_FROZEN else logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(LOG_FILE),
+        RotatingFileHandler(
+            LOG_FILE,
+            maxBytes=100 * 1024 * 1024,  # 100 MB per file
+            backupCount=9,               # Keep 9 backups + 1 active = 10 total
+            encoding='utf-8'
+        ),
         logging.StreamHandler()
     ]
 )

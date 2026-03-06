@@ -333,7 +333,6 @@ class Database:
             conn.commit()
             return cursor.lastrowid
         except sqlite3.IntegrityError as e:
-            logger.warning(f"Duplicate timesheet entry: {sync_id}")
             return None
         except Exception as e:
             conn.rollback()
@@ -409,7 +408,7 @@ class Database:
                 SELECT
                     COUNT(*) as total,
                     SUM(CASE WHEN backend_timesheet_id IS NOT NULL THEN 1 ELSE 0 END) as synced,
-                    SUM(CASE WHEN backend_timesheet_id IS NULL THEN 1 ELSE 0 END) as pending,
+                    SUM(CASE WHEN backend_timesheet_id IS NULL AND sync_error_message IS NULL THEN 1 ELSE 0 END) as pending,
                     SUM(CASE WHEN sync_error_message IS NOT NULL THEN 1 ELSE 0 END) as errors
                 FROM timesheet
             """)

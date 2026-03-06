@@ -278,11 +278,18 @@ class PullService:
                     time_str = log.timestamp.strftime("%H:%M:%S")
                     sync_id = f"ZK_{device_id}_{log.user_id}_{log.timestamp.strftime('%Y%m%d%H%M%S')}"
 
-                    # Get employee from database
+                    # Get employee from database, create if not found
                     employee = self.database.get_employee_by_code(str(log.user_id))
                     if not employee:
-                        logger.warning(f"Employee not found for user_id: {log.user_id}")
-                        stats['errors'] += 1
+                        self.database.add_or_update_employee(
+                            backend_id=str(log.user_id),
+                            name=f"User {log.user_id}",
+                            employee_code=str(log.user_id)
+                        )
+                        employee = self.database.get_employee_by_code(str(log.user_id))
+
+                    if not employee:
+                        logger.error(f"Emp not found: {log.user_id}")
                         continue
 
                     # Add to database with device_id
