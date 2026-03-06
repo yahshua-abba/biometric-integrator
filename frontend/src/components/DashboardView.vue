@@ -140,7 +140,7 @@
         </div>
         <button
           @click="handlePushSync"
-          :disabled="pushLoading || stats.pending === 0"
+          :disabled="pushLoading || (stats.pending + stats.errors) === 0"
           class="btn btn-success w-full"
         >
           <span v-if="!pushLoading">Push Data Now</span>

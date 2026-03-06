@@ -440,9 +440,9 @@ class PushService:
                 # Token expired, try to re-authenticate
                 logger.warning("Token expired, re-authenticating...")
                 self.database.update_push_token(None)
-                new_token = self.authenticate()
+                auth_result = self.authenticate()
                 # Retry once with new token
-                headers['Authorization'] = f'Token {new_token}'
+                headers['Authorization'] = f'Token {auth_result["token"]}'
                 retry_response = self.session.post(
                     sync_url,
                     headers=headers,

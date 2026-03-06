@@ -193,7 +193,8 @@ class PullService:
             'processed': 0,
             'new_records': 0,
             'duplicates': 0,
-            'errors': 0
+            'errors': 0,
+            'filtered': 0  # records outside the requested date range
         }
 
         # Get device info for logging
@@ -261,6 +262,7 @@ class PullService:
                 try:
                     # Filter by date range
                     if log.timestamp < start_date or log.timestamp > end_date:
+                        stats['filtered'] += 1
                         continue
 
                     stats['processed'] += 1
@@ -341,7 +343,7 @@ class PullService:
             # Also update global last pull timestamp for backwards compatibility
             self.database.update_api_config(last_pull_at=datetime.now().isoformat())
 
-            message = f"{stats['new_records']} new, {stats['duplicates']} duplicates, {stats['errors']} errors"
+            message = f"{stats['new_records']} new, {stats['duplicates']} duplicates, {stats['errors']} errors, {stats['filtered']} outside date range"
             logger.info(f"Pull from {device_name} complete: {message}")
 
             return True, message, stats
