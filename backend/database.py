@@ -287,6 +287,13 @@ class Database:
             except:
                 pass  # Column already exists
 
+            # Add excluded_from_sync column to timesheet (user-marked "do not sync")
+            try:
+                cursor.execute("ALTER TABLE timesheet ADD COLUMN excluded_from_sync BOOLEAN DEFAULT 0")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_timesheet_excluded ON timesheet(excluded_from_sync)")
+            except:
+                pass  # Column already exists
+
             # Create indexes for deleted_at (after column exists)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_device_deleted_at ON device(deleted_at)")
             cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_device_unique_ip_active ON device(ip) WHERE deleted_at IS NULL")
@@ -354,9 +361,34 @@ class Database:
                 LEFT JOIN device d ON t.device_id = d.id
                 WHERE t.backend_timesheet_id IS NULL
                 AND t.status = 'success'
+                AND COALESCE(t.excluded_from_sync, 0) = 0
                 ORDER BY t.created_at ASC
                 LIMIT ?
             """, (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    def get_unsynced_timesheets_by_ids(self, ids):
+        """Get unsynced timesheet entries matching the given list of IDs"""
+        if not ids:
+            return []
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            placeholders = ','.join('?' for _ in ids)
+            cursor.execute(f"""
+                SELECT t.*, e.backend_id as employee_backend_id, e.name as employee_name,
+                       e.employee_code as employee_code, d.branch_id as branch_id
+                FROM timesheet t
+                JOIN employee e ON t.employee_id = e.id
+                LEFT JOIN device d ON t.device_id = d.id
+                WHERE t.backend_timesheet_id IS NULL
+                AND t.status = 'success'
+                AND COALESCE(t.excluded_from_sync, 0) = 0
+                AND t.id IN ({placeholders})
+                ORDER BY t.created_at ASC
+            """, tuple(ids))
             return [dict(row) for row in cursor.fetchall()]
         finally:
             conn.close()
@@ -408,11 +440,40 @@ class Database:
                 SELECT
                     COUNT(*) as total,
                     SUM(CASE WHEN backend_timesheet_id IS NOT NULL THEN 1 ELSE 0 END) as synced,
-                    SUM(CASE WHEN backend_timesheet_id IS NULL AND sync_error_message IS NULL THEN 1 ELSE 0 END) as pending,
-                    SUM(CASE WHEN sync_error_message IS NOT NULL THEN 1 ELSE 0 END) as errors
+                    SUM(CASE WHEN backend_timesheet_id IS NULL AND sync_error_message IS NULL AND COALESCE(excluded_from_sync, 0) = 0 THEN 1 ELSE 0 END) as pending,
+                    SUM(CASE WHEN sync_error_message IS NOT NULL AND COALESCE(excluded_from_sync, 0) = 0 THEN 1 ELSE 0 END) as errors,
+                    SUM(CASE WHEN COALESCE(excluded_from_sync, 0) = 1 AND backend_timesheet_id IS NULL THEN 1 ELSE 0 END) as excluded
                 FROM timesheet
             """)
             return dict(cursor.fetchone())
+        finally:
+            conn.close()
+
+    def set_timesheets_excluded(self, ids, excluded):
+        """Mark or unmark a list of timesheet IDs as excluded from sync.
+
+        Already-synced rows (backend_timesheet_id IS NOT NULL) are not modified —
+        once a record has been pushed, exclusion is meaningless.
+        Returns the number of rows updated.
+        """
+        if not ids:
+            return 0
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            placeholders = ','.join('?' for _ in ids)
+            cursor.execute(f"""
+                UPDATE timesheet
+                SET excluded_from_sync = ?
+                WHERE id IN ({placeholders})
+                AND backend_timesheet_id IS NULL
+            """, (1 if excluded else 0, *ids))
+            conn.commit()
+            return cursor.rowcount
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Error updating excluded_from_sync: {e}")
+            raise
         finally:
             conn.close()
 

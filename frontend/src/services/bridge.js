@@ -131,6 +131,10 @@ class BridgeService {
     return this.call('clearTimesheets', dateFrom, dateTo, onlySynced)
   }
 
+  async setTimesheetExcluded(ids, excluded) {
+    return this.call('setTimesheetExcluded', JSON.stringify(ids), excluded)
+  }
+
   // ==================== EMPLOYEE METHODS ====================
 
   async getAllEmployees() {
@@ -146,6 +150,10 @@ class BridgeService {
 
   async startPushSync() {
     return this.call('startPushSync')
+  }
+
+  async startPushSyncForIds(ids) {
+    return this.call('startPushSyncForIds', JSON.stringify(ids))
   }
 
   async getSyncLogs() {
