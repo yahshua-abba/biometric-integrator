@@ -1,12 +1,47 @@
 <template>
   <div class="min-h-screen bg-gray-50">
     <!-- Sidebar -->
-    <div class="fixed inset-y-0 left-0 w-64 bg-white shadow-lg">
+    <div
+      :class="[
+        'fixed inset-y-0 left-0 bg-white shadow-lg transition-[width] duration-200 ease-out',
+        sidebarCollapsed ? 'w-16' : 'w-64'
+      ]"
+    >
       <div class="flex flex-col h-full">
-        <!-- Logo/Title -->
-        <div class="p-6 bg-primary-600 text-white">
-          <h1 class="text-xl font-bold">Biometrics</h1>
-          <p class="text-sm text-primary-100">Integration Sync Tool</p>
+        <!-- Logo/Title + collapse toggle -->
+        <div
+          :class="[
+            'bg-primary-600 text-white flex items-center',
+            sidebarCollapsed ? 'p-3 justify-center' : 'p-6 justify-between'
+          ]"
+        >
+          <div v-if="!sidebarCollapsed" class="min-w-0">
+            <h1 class="text-xl font-bold">Biometrics</h1>
+            <p class="text-sm text-primary-100">Integration Sync Tool</p>
+          </div>
+          <button
+            @click="toggleSidebar"
+            class="p-1.5 rounded hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-white/30"
+            :title="sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+            :aria-label="sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path
+                v-if="sidebarCollapsed"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M13 5l7 7-7 7M5 5l7 7-7 7"
+              />
+              <path
+                v-else
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                stroke-width="2"
+                d="M11 19l-7-7 7-7m8 14l-7-7 7-7"
+              />
+            </svg>
+          </button>
         </div>
 
         <!-- Navigation -->
@@ -15,28 +50,37 @@
             v-for="view in views"
             :key="view.id"
             @click="currentView = view.id"
+            :title="sidebarCollapsed ? view.label : ''"
             :class="[
-              'w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors',
+              'w-full flex items-center rounded-lg text-left transition-colors',
+              sidebarCollapsed ? 'justify-center px-2 py-3' : 'gap-3 px-4 py-3',
               currentView === view.id
                 ? 'bg-primary-50 text-primary-700 font-medium'
                 : 'text-gray-700 hover:bg-gray-100'
             ]"
           >
-            <component :is="view.icon" class="w-5 h-5" />
-            <span>{{ view.label }}</span>
+            <component :is="view.icon" class="w-5 h-5 shrink-0" />
+            <span v-if="!sidebarCollapsed">{{ view.label }}</span>
           </button>
         </nav>
 
         <!-- App Info -->
-        <div class="p-4 border-t text-xs text-gray-500">
+        <div v-if="!sidebarCollapsed" class="p-4 border-t text-xs text-gray-500">
           <div>Version {{ appVersion }}</div>
           <div>© {{ new Date().getFullYear() }} The ABBA Initiative, OPC</div>
+        </div>
+        <div
+          v-else
+          class="p-2 border-t text-[10px] text-gray-500 text-center"
+          :title="`Version ${appVersion}`"
+        >
+          v{{ appVersion }}
         </div>
       </div>
     </div>
 
     <!-- Main Content -->
-    <div class="ml-64">
+    <div :class="['transition-[margin] duration-200 ease-out', sidebarCollapsed ? 'ml-16' : 'ml-64']">
       <component :is="currentViewComponent" />
     </div>
 
@@ -46,7 +90,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, h } from 'vue'
+import { ref, computed, onMounted, watch, h } from 'vue'
 import DashboardView from './components/DashboardView.vue'
 import TimesheetView from './components/TimesheetView.vue'
 import ConfigView from './components/ConfigView.vue'
@@ -58,6 +102,19 @@ import bridgeService from './services/bridge'
 
 const currentView = ref('dashboard')
 const appVersion = ref('1.0.15')
+
+const SIDEBAR_KEY = 'sidebar:collapsed'
+const sidebarCollapsed = ref(
+  typeof localStorage !== 'undefined' && localStorage.getItem(SIDEBAR_KEY) === '1'
+)
+const toggleSidebar = () => {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+}
+watch(sidebarCollapsed, (val) => {
+  try {
+    localStorage.setItem(SIDEBAR_KEY, val ? '1' : '0')
+  } catch (_) { /* localStorage unavailable */ }
+})
 
 // Icon components (SVG)
 const DashboardIcon = () => h('svg', { fill: 'none', stroke: 'currentColor', viewBox: '0 0 24 24' }, [

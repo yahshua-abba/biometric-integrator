@@ -4,6 +4,13 @@ on:
   push:
     tags:
       - 'v*.*.*'  # Trigger on version tags like v1.0.0, v1.0.1, etc.
+  workflow_dispatch:
+    # Manual build — produces downloadable artifacts only; no GitHub Release, no S3 upload.
+    inputs:
+      version:
+        description: 'Version label for the build (e.g. 1.0.18-dev). Leave blank for 0.0.0-dev.'
+        required: false
+        default: ''
 
 permissions:
   contents: write  # Required to create releases and upload assets
@@ -30,6 +37,17 @@ jobs:
           python-version: '3.10'
           cache: 'pip'
 
+      - name: Compute build version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ inputs.version }}"
+            if [ -z "$VERSION" ]; then VERSION="0.0.0-dev"; fi
+          fi
+          echo "BUILD_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "Resolved build version: $VERSION"
+
       - name: Install frontend dependencies
         working-directory: ./frontend
         run: npm ci
@@ -48,7 +66,7 @@ jobs:
       - name: Write VERSION file
         working-directory: ./backend
         run: |
-          echo "${GITHUB_REF_NAME#v}" > VERSION
+          echo "$BUILD_VERSION" > VERSION
 
       - name: Build macOS app with PyInstaller
         working-directory: ./backend
@@ -58,11 +76,19 @@ jobs:
       - name: Create DMG installer
         working-directory: ./backend
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
           chmod +x create_dmg.sh
-          ./create_dmg.sh "$VERSION"
+          ./create_dmg.sh "$BUILD_VERSION"
+
+      - name: Upload DMG as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg-v${{ env.BUILD_VERSION }}
+          path: dist/BiometricIntegration-*.dmg
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload DMG to Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
           files: |
@@ -74,6 +100,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload DMG to S3
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           aws s3 cp dist/BiometricIntegration-*.dmg s3://yp-files/biometrics-integration/biometric-integration.dmg
         env:
@@ -102,6 +129,18 @@ jobs:
           python-version: '3.10'
           cache: 'pip'
 
+      - name: Compute build version
+        shell: pwsh
+        run: |
+          if ("${{ github.event_name }}" -eq "push") {
+            $version = "${{ github.ref_name }}".TrimStart('v')
+          } else {
+            $version = "${{ inputs.version }}"
+            if ([string]::IsNullOrWhiteSpace($version)) { $version = "0.0.0-dev" }
+          }
+          "BUILD_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Resolved build version: $version"
+
       - name: Install frontend dependencies
         working-directory: ./frontend
         run: npm ci
@@ -126,8 +165,7 @@ jobs:
       - name: Write VERSION file
         working-directory: ./backend
         run: |
-          $version = "${{ github.ref_name }}".TrimStart('v')
-          Set-Content -Path VERSION -Value $version -NoNewline
+          Set-Content -Path VERSION -Value $env:BUILD_VERSION -NoNewline
 
       - name: Build Windows EXE with PyInstaller
         working-directory: ./backend
@@ -137,10 +175,18 @@ jobs:
       - name: Create ZIP archive
         working-directory: ./dist
         run: |
-          $version = "${{ github.ref_name }}".TrimStart('v')
-          Compress-Archive -Path BiometricIntegration.exe -DestinationPath BiometricIntegration-v$version-Windows.zip
+          Compress-Archive -Path BiometricIntegration.exe -DestinationPath "BiometricIntegration-v$env:BUILD_VERSION-Windows.zip"
+
+      - name: Upload ZIP as build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-zip-v${{ env.BUILD_VERSION }}
+          path: dist/BiometricIntegration-*.zip
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload Windows ZIP to Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
           files: |
@@ -150,6 +196,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload Windows ZIP to S3
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           aws s3 cp (Get-ChildItem dist/BiometricIntegration-*.zip).FullName s3://yp-files/biometrics-integration/biometric-integration.zip
         env:

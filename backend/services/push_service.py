@@ -192,13 +192,15 @@ class PushService:
         except Exception as e:
             return False, str(e)
 
-    def push_data(self, progress_callback=None):
+    def push_data(self, progress_callback=None, timesheet_ids=None):
         """
         Push unsynced timesheet data to YAHSHUA Payroll in batches of 50
 
         Args:
             progress_callback: Optional callback function for progress updates.
                               Called with dict: {batch_current, batch_total, batch_size, success, failed}
+            timesheet_ids: Optional list of timesheet IDs to push. When provided,
+                           only records with these IDs (and still unsynced) are pushed.
 
         Returns:
             tuple: (success: bool, message: str, stats: dict)
@@ -216,13 +218,17 @@ class PushService:
         }
 
         try:
-            logger.info("Starting push sync to YAHSHUA Payroll")
+            scope = f"selected ({len(timesheet_ids)} records)" if timesheet_ids else "all unsynced"
+            logger.info(f"Starting push sync to YAHSHUA Payroll: {scope}")
 
             # Get token
             token = self.get_valid_token()
 
-            # Get ALL unsynced timesheets
-            all_unsynced = self.database.get_unsynced_timesheets(limit=10000)
+            # Get unsynced timesheets (filtered by ids if provided)
+            if timesheet_ids:
+                all_unsynced = self.database.get_unsynced_timesheets_by_ids(timesheet_ids)
+            else:
+                all_unsynced = self.database.get_unsynced_timesheets(limit=10000)
             logger.info(f"Found {len(all_unsynced)} unsynced timesheet records")
 
             if len(all_unsynced) == 0:

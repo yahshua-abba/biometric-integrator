@@ -219,9 +219,62 @@ class Bridge(QObject):
     @pyqtSlot(result=str)
     def startPushSync(self):
         """Manually trigger push sync to cloud payroll (runs in background thread)"""
-        logger.info("Manual push sync triggered from UI")
+        return self._start_push_sync(timesheet_ids=None)
 
-        # Start push in background thread
+    @pyqtSlot(str, bool, result=str)
+    def setTimesheetExcluded(self, ids_json, excluded):
+        """Mark or unmark a list of timesheet IDs as excluded from sync.
+
+        Args:
+            ids_json: JSON-encoded list of timesheet IDs.
+            excluded: True to mark as do-not-sync, False to unmark.
+        """
+        try:
+            ids = json.loads(ids_json) if ids_json else []
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid timesheet ids payload: {e}")
+            return json.dumps({"success": False, "error": "Invalid timesheet ids"})
+
+        ids = [int(i) for i in ids if i is not None]
+        if not ids:
+            return json.dumps({"success": False, "error": "No timesheet IDs provided"})
+
+        try:
+            updated = self.database.set_timesheets_excluded(ids, bool(excluded))
+            verb = "excluded" if excluded else "included"
+            return json.dumps({
+                "success": True,
+                "updated": updated,
+                "message": f"{updated} record(s) {verb}"
+            })
+        except Exception as e:
+            logger.error(f"Error updating exclusion flag: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
+    @pyqtSlot(str, result=str)
+    def startPushSyncForIds(self, ids_json):
+        """Manually trigger push sync for a specific set of timesheet IDs.
+
+        Args:
+            ids_json: JSON-encoded list of timesheet IDs to push.
+        """
+        try:
+            ids = json.loads(ids_json) if ids_json else []
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid timesheet ids payload: {e}")
+            return json.dumps({"success": False, "error": "Invalid timesheet ids"})
+
+        ids = [int(i) for i in ids if i is not None]
+        if not ids:
+            return json.dumps({"success": False, "error": "No timesheet IDs provided"})
+
+        return self._start_push_sync(timesheet_ids=ids)
+
+    def _start_push_sync(self, timesheet_ids=None):
+        """Shared implementation: run push in a background thread."""
+        scope = f"{len(timesheet_ids)} selected records" if timesheet_ids else "all unsynced"
+        logger.info(f"Manual push sync triggered from UI: {scope}")
+
         def run_push():
             try:
                 # Progress callback to emit updates to frontend
@@ -229,7 +282,10 @@ class Bridge(QObject):
                     logger.info(f"Emitting progress: {progress_dict}")
                     self.syncProgressUpdated.emit(json.dumps(progress_dict))
 
-                success, message, stats = self.push_service.push_data(progress_callback=on_progress)
+                success, message, stats = self.push_service.push_data(
+                    progress_callback=on_progress,
+                    timesheet_ids=timesheet_ids
+                )
 
                 result = {
                     "success": success,

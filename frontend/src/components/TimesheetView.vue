@@ -64,9 +64,44 @@
       </div>
     </div>
 
+    <SyncProgressModal :show="showProgressModal" :progress="pushProgress" />
+
     <div class="flex items-center justify-between">
       <h1 class="text-3xl font-bold text-gray-900">Timesheet Records</h1>
       <div class="flex gap-2">
+        <button
+          @click="syncSelected"
+          :disabled="selectedIds.length === 0 || pushLoading"
+          class="btn bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+          :title="selectedIds.length === 0 ? 'Select pending or failed records to sync' : `Sync ${selectedIds.length} selected record(s)`"
+        >
+          <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          Sync Selected ({{ selectedIds.length }})
+        </button>
+        <button
+          v-if="selectedIds.length > 0"
+          @click="bulkSetExcluded(true)"
+          class="btn bg-gray-200 text-gray-800 hover:bg-gray-300"
+          title="Mark selected records as do-not-sync"
+        >
+          <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636m12.728 12.728L5.636 5.636" />
+          </svg>
+          Mark Do Not Sync
+        </button>
+        <button
+          v-if="selectedIds.length > 0 && filterStatus === 'excluded'"
+          @click="bulkSetExcluded(false)"
+          class="btn bg-gray-200 text-gray-800 hover:bg-gray-300"
+          title="Restore selected records so they sync again"
+        >
+          <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          Unmark Do Not Sync
+        </button>
         <button @click="openClearModal" class="btn bg-red-100 text-red-700 hover:bg-red-200">
           <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -120,6 +155,7 @@
           <option value="synced">Synced</option>
           <option value="pending">Pending</option>
           <option value="error">Errors</option>
+          <option value="excluded">Do Not Sync</option>
         </select>
       </div>
     </div>
@@ -136,6 +172,17 @@
         <table class="min-w-full divide-y divide-gray-200">
           <thead class="bg-gray-50">
             <tr>
+              <th class="px-4 py-3 text-left">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                  :checked="allSelectableSelected"
+                  :indeterminate.prop="someSelected && !allSelectableSelected"
+                  :disabled="selectableIdsOnPage.length === 0"
+                  @change="toggleSelectAll($event.target.checked)"
+                  title="Select all syncable rows on this page"
+                />
+              </th>
               <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Date & Time
               </th>
@@ -164,6 +211,15 @@
           </thead>
           <tbody class="bg-white divide-y divide-gray-200">
             <tr v-for="entry in paginatedTimesheets" :key="entry.id">
+              <td class="px-4 py-4">
+                <input
+                  v-if="isSelectable(entry)"
+                  type="checkbox"
+                  class="h-4 w-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                  :checked="selectedIds.includes(entry.id)"
+                  @change="toggleSelection(entry.id, $event.target.checked)"
+                />
+              </td>
               <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                 {{ entry.date }} {{ entry.time }}
               </td>
@@ -193,6 +249,13 @@
                   Synced
                 </span>
                 <span
+                  v-else-if="entry.excluded_from_sync"
+                  class="badge bg-gray-200 text-gray-700"
+                  title="Marked as do-not-sync"
+                >
+                  Do Not Sync
+                </span>
+                <span
                   v-else-if="entry.sync_error_message"
                   class="badge badge-error"
                   :title="entry.sync_error_message"
@@ -212,16 +275,31 @@
                 </div>
               </td>
               <td class="px-6 py-4 whitespace-nowrap text-sm">
-                <button
-                  v-if="entry.sync_error_message"
-                  @click="retrySync(entry.id)"
-                  class="text-primary-600 hover:text-primary-900"
-                  title="Retry sync"
-                >
-                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                </button>
+                <div class="flex items-center gap-3">
+                  <button
+                    v-if="entry.sync_error_message && !entry.excluded_from_sync"
+                    @click="retrySync(entry.id)"
+                    class="text-primary-600 hover:text-primary-900"
+                    title="Retry sync"
+                  >
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </button>
+                  <button
+                    v-if="!entry.backend_timesheet_id"
+                    @click="toggleExcluded(entry)"
+                    class="text-gray-500 hover:text-gray-800"
+                    :title="entry.excluded_from_sync ? 'Restore — allow syncing' : 'Mark as do-not-sync'"
+                  >
+                    <svg v-if="!entry.excluded_from_sync" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636" />
+                    </svg>
+                    <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </button>
+                </div>
               </td>
             </tr>
           </tbody>
@@ -276,6 +354,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import bridgeService from '../services/bridge'
 import { useToast } from '../composables/useToast'
+import SyncProgressModal from './SyncProgressModal.vue'
 
 const { success, error } = useToast()
 
@@ -290,9 +369,57 @@ const filterDateTo = ref('')
 const currentPage = ref(1)
 const pageSize = 50
 
-// Reset to page 1 when any filter changes
+// Selection state for manual sync
+const selectedIds = ref([])
+const pushLoading = ref(false)
+const showProgressModal = ref(false)
+const pushProgress = ref({
+  batch_current: 0,
+  batch_total: 0,
+  batch_size: 0,
+  success: 0,
+  failed: 0
+})
+
+// A row is selectable if it has not yet been successfully synced.
+// (Excluded rows are still selectable so the user can unmark them in bulk.)
+const isSelectable = (entry) => !entry.backend_timesheet_id
+
+const selectableIdsOnPage = computed(() =>
+  paginatedTimesheets.value.filter(isSelectable).map(e => e.id)
+)
+
+const allSelectableSelected = computed(() =>
+  selectableIdsOnPage.value.length > 0 &&
+  selectableIdsOnPage.value.every(id => selectedIds.value.includes(id))
+)
+
+const someSelected = computed(() =>
+  selectableIdsOnPage.value.some(id => selectedIds.value.includes(id))
+)
+
+const toggleSelection = (id, checked) => {
+  if (checked) {
+    if (!selectedIds.value.includes(id)) selectedIds.value.push(id)
+  } else {
+    selectedIds.value = selectedIds.value.filter(x => x !== id)
+  }
+}
+
+const toggleSelectAll = (checked) => {
+  const pageIds = selectableIdsOnPage.value
+  if (checked) {
+    const set = new Set([...selectedIds.value, ...pageIds])
+    selectedIds.value = Array.from(set)
+  } else {
+    selectedIds.value = selectedIds.value.filter(id => !pageIds.includes(id))
+  }
+}
+
+// Reset to page 1 and clear selection when any filter changes
 watch([searchQuery, filterStatus, filterDevice, filterDateFrom, filterDateTo], () => {
   currentPage.value = 1
+  selectedIds.value = []
 })
 
 // Initialize date filters (30 days ago to today)
@@ -366,9 +493,11 @@ const filteredTimesheets = computed(() => {
   if (filterStatus.value === 'synced') {
     filtered = filtered.filter(t => t.backend_timesheet_id !== null)
   } else if (filterStatus.value === 'pending') {
-    filtered = filtered.filter(t => t.backend_timesheet_id === null && !t.sync_error_message)
+    filtered = filtered.filter(t => t.backend_timesheet_id === null && !t.sync_error_message && !t.excluded_from_sync)
   } else if (filterStatus.value === 'error') {
-    filtered = filtered.filter(t => t.sync_error_message !== null)
+    filtered = filtered.filter(t => t.sync_error_message !== null && !t.excluded_from_sync)
+  } else if (filterStatus.value === 'excluded') {
+    filtered = filtered.filter(t => !!t.excluded_from_sync && !t.backend_timesheet_id)
   }
 
   // Filter by search query
@@ -412,6 +541,98 @@ const loadData = async () => {
   }
 }
 
+const syncSelected = async () => {
+  if (selectedIds.value.length === 0 || pushLoading.value) return
+
+  // Skip excluded records — they're marked do-not-sync.
+  const byId = new Map(timesheets.value.map(t => [t.id, t]))
+  const syncableIds = selectedIds.value.filter(id => {
+    const t = byId.get(id)
+    return t && !t.excluded_from_sync && !t.backend_timesheet_id
+  })
+  if (syncableIds.length === 0) {
+    error('All selected records are marked do-not-sync or already synced.')
+    return
+  }
+  if (syncableIds.length < selectedIds.value.length) {
+    success(`Skipping ${selectedIds.value.length - syncableIds.length} do-not-sync record(s).`)
+  }
+
+  pushLoading.value = true
+  showProgressModal.value = true
+  pushProgress.value = {
+    batch_current: 0,
+    batch_total: 0,
+    batch_size: 0,
+    success: 0,
+    failed: 0
+  }
+  try {
+    await bridgeService.startPushSyncForIds(syncableIds)
+  } catch (err) {
+    error(`Sync failed: ${err.message}`)
+    pushLoading.value = false
+    showProgressModal.value = false
+  }
+}
+
+const handlePushProgress = (event) => {
+  const progress = event.detail
+  if (progress.type === 'pull') return
+  pushProgress.value = {
+    batch_current: progress.batch_current || 0,
+    batch_total: progress.batch_total || 0,
+    batch_size: progress.batch_size || 0,
+    success: progress.success || 0,
+    failed: progress.failed || 0
+  }
+}
+
+const handlePushCompleted = (event) => {
+  const data = event.detail
+  if (data.type !== 'push') return
+  pushLoading.value = false
+  showProgressModal.value = false
+  selectedIds.value = []
+  if (data.result.success) {
+    success(data.result.message)
+  } else {
+    error(data.result.message || data.result.error || 'Sync failed')
+  }
+}
+
+const toggleExcluded = async (entry) => {
+  const newValue = !entry.excluded_from_sync
+  try {
+    const result = await bridgeService.setTimesheetExcluded([entry.id], newValue)
+    success(result.message)
+    await loadData()
+  } catch (err) {
+    error(`Failed to update record: ${err.message}`)
+  }
+}
+
+const bulkSetExcluded = async (excluded) => {
+  // Only operate on non-synced rows.
+  const byId = new Map(timesheets.value.map(t => [t.id, t]))
+  const eligible = selectedIds.value.filter(id => {
+    const t = byId.get(id)
+    return t && !t.backend_timesheet_id
+  })
+  if (eligible.length === 0) {
+    error('No eligible records selected (already-synced rows cannot be excluded).')
+    return
+  }
+  try {
+    const result = await bridgeService.setTimesheetExcluded(eligible, excluded)
+    success(result.message)
+    selectedIds.value = []
+    await loadData()
+  } catch (err) {
+    error(`Failed to update records: ${err.message}`)
+  }
+}
+
 const retrySync = async (timesheetId) => {
   try {
     await bridgeService.retryFailedTimesheet(timesheetId)
@@ -433,5 +654,9 @@ onMounted(async () => {
   window.addEventListener('syncCompleted', async () => {
     await loadData()
   })
+
+  // Listen for push progress + completion to drive the modal
+  window.addEventListener('syncProgressUpdated', handlePushProgress)
+  window.addEventListener('syncCompleted', handlePushCompleted)
 })
 </script>
