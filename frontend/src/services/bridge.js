@@ -119,6 +119,10 @@ class BridgeService {
     return this.call('getAllTimesheets', limit, offset)
   }
 
+  async getDeletedTimesheets(limit = 1000, offset = 0) {
+    return this.call('getDeletedTimesheets', limit, offset)
+  }
+
   async getUnsyncedTimesheets(limit = 100) {
     return this.call('getUnsyncedTimesheets', limit)
   }
@@ -129,6 +133,14 @@ class BridgeService {
 
   async clearTimesheets(dateFrom, dateTo, onlySynced = true) {
     return this.call('clearTimesheets', dateFrom, dateTo, onlySynced)
+  }
+
+  async deleteTimesheetsByIds(ids) {
+    return this.call('deleteTimesheetsByIds', JSON.stringify(ids))
+  }
+
+  async setTimesheetExcludedByDateRange(dateFrom, dateTo, excluded) {
+    return this.call('setTimesheetExcludedByDateRange', dateFrom, dateTo, excluded)
   }
 
   async setTimesheetExcluded(ids, excluded) {

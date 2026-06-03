@@ -64,6 +64,73 @@
       </div>
     </div>
 
+    <!-- Mark Do Not Sync by Date Range Modal -->
+    <div v-if="showExcludeRangeModal" class="fixed inset-0 z-50 flex items-center justify-center">
+      <div class="absolute inset-0 bg-black bg-opacity-50" @click="showExcludeRangeModal = false"></div>
+      <div class="relative bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+        <div class="flex items-center justify-between p-4 border-b">
+          <h3 class="text-lg font-semibold text-gray-800">Mark Do Not Sync by Date Range</h3>
+          <button @click="showExcludeRangeModal = false" class="text-gray-500 hover:text-gray-700">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div class="p-4 space-y-4">
+          <p class="text-sm text-gray-600">
+            All <strong>unsynced</strong> records within the selected date range will be marked as
+            do-not-sync. Already-synced records are not affected.
+          </p>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">From</label>
+            <input v-model="excludeRangeDateFrom" type="date" class="input w-full" />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">To</label>
+            <input v-model="excludeRangeDateTo" type="date" class="input w-full" />
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 p-4 border-t">
+          <button @click="showExcludeRangeModal = false" class="btn btn-secondary">Cancel</button>
+          <button @click="executeExcludeByRange" :disabled="excludingByRange" class="btn bg-gray-700 text-white hover:bg-gray-800">
+            <span v-if="!excludingByRange">Mark Do Not Sync</span>
+            <span v-else>Marking...</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete Selected Confirmation Modal -->
+    <div v-if="showDeleteSelectedModal" class="fixed inset-0 z-50 flex items-center justify-center">
+      <div class="absolute inset-0 bg-black bg-opacity-50" @click="showDeleteSelectedModal = false"></div>
+      <div class="relative bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
+        <div class="flex items-center justify-between p-4 border-b">
+          <h3 class="text-lg font-semibold text-red-600">Delete Selected Records</h3>
+          <button @click="showDeleteSelectedModal = false" class="text-gray-500 hover:text-gray-700">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div class="p-4 space-y-3">
+          <div class="bg-red-50 border border-red-200 rounded-lg p-3">
+            <p class="text-sm text-red-700">
+              <strong>{{ selectedIds.length }} record(s)</strong> will be deleted. They will no longer appear
+              in the timesheet list and will not be synced to payroll — even if the biometric device
+              re-supplies the same logs on a future pull.
+            </p>
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 p-4 border-t">
+          <button @click="showDeleteSelectedModal = false" class="btn btn-secondary">Cancel</button>
+          <button @click="executeDeleteSelected" :disabled="deletingSelected" class="btn bg-red-600 text-white hover:bg-red-700">
+            <span v-if="!deletingSelected">Delete {{ selectedIds.length }} Record(s)</span>
+            <span v-else>Deleting...</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <SyncProgressModal :show="showProgressModal" :progress="pushProgress" />
 
     <div class="flex items-center justify-between">
@@ -92,6 +159,16 @@
           Mark Do Not Sync
         </button>
         <button
+          @click="openExcludeRangeModal"
+          class="btn bg-gray-200 text-gray-800 hover:bg-gray-300"
+          title="Mark all unsynced records in a date range as do-not-sync"
+        >
+          <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+          </svg>
+          Mark by Date Range
+        </button>
+        <button
           v-if="selectedIds.length > 0 && filterStatus === 'excluded'"
           @click="bulkSetExcluded(false)"
           class="btn bg-gray-200 text-gray-800 hover:bg-gray-300"
@@ -101,6 +178,17 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           Unmark Do Not Sync
+        </button>
+        <button
+          v-if="selectedIds.length > 0"
+          @click="confirmDeleteSelected"
+          class="btn bg-red-600 text-white hover:bg-red-700"
+          :title="`Delete ${selectedIds.length} selected record(s)`"
+        >
+          <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+          Delete Selected ({{ selectedIds.length }})
         </button>
         <button @click="openClearModal" class="btn bg-red-100 text-red-700 hover:bg-red-200">
           <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -156,6 +244,7 @@
           <option value="pending">Pending</option>
           <option value="error">Errors</option>
           <option value="excluded">Do Not Sync</option>
+          <option value="deleted">Deleted</option>
         </select>
       </div>
     </div>
@@ -210,10 +299,10 @@
             </tr>
           </thead>
           <tbody class="bg-white divide-y divide-gray-200">
-            <tr v-for="entry in paginatedTimesheets" :key="entry.id">
+            <tr v-for="entry in paginatedTimesheets" :key="entry.id" :class="filterStatus === 'deleted' ? 'opacity-60' : ''">
               <td class="px-4 py-4">
                 <input
-                  v-if="isSelectable(entry)"
+                  v-if="isSelectable(entry) && filterStatus !== 'deleted'"
                   type="checkbox"
                   class="h-4 w-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
                   :checked="selectedIds.includes(entry.id)"
@@ -242,7 +331,14 @@
               </td>
               <td class="px-6 py-4 whitespace-nowrap">
                 <span
-                  v-if="entry.backend_timesheet_id"
+                  v-if="entry.deleted_at"
+                  class="badge bg-red-100 text-red-600"
+                  :title="`Deleted on ${formatDateTime(entry.deleted_at)}${entry.backend_timesheet_id ? ' · Was synced' : ' · Was not synced'}`"
+                >
+                  Deleted
+                </span>
+                <span
+                  v-else-if="entry.backend_timesheet_id"
                   class="badge badge-success"
                   :title="`Backend ID: ${entry.backend_timesheet_id}`"
                 >
@@ -275,7 +371,7 @@
                 </div>
               </td>
               <td class="px-6 py-4 whitespace-nowrap text-sm">
-                <div class="flex items-center gap-3">
+                <div v-if="!entry.deleted_at" class="flex items-center gap-3">
                   <button
                     v-if="entry.sync_error_message && !entry.excluded_from_sync"
                     @click="retrySync(entry.id)"
@@ -300,6 +396,7 @@
                     </svg>
                   </button>
                 </div>
+                <span v-else class="text-xs text-gray-400 italic">{{ formatDateTime(entry.deleted_at) }}</span>
               </td>
             </tr>
           </tbody>
@@ -422,6 +519,12 @@ watch([searchQuery, filterStatus, filterDevice, filterDateFrom, filterDateTo], (
   selectedIds.value = []
 })
 
+// Reload from the right endpoint when switching to/from deleted view
+watch(filterStatus, (newVal, oldVal) => {
+  const crossesBoundary = (newVal === 'deleted') !== (oldVal === 'deleted')
+  if (crossesBoundary) loadData()
+})
+
 // Initialize date filters (30 days ago to today)
 const initDateFilters = () => {
   const today = new Date()
@@ -430,6 +533,63 @@ const initDateFilters = () => {
 
   filterDateFrom.value = thirtyDaysAgo.toISOString().split('T')[0]
   filterDateTo.value = today.toISOString().split('T')[0]
+}
+
+// Mark by date range state
+const showExcludeRangeModal = ref(false)
+const excludeRangeDateFrom = ref('')
+const excludeRangeDateTo = ref('')
+const excludingByRange = ref(false)
+
+const openExcludeRangeModal = () => {
+  const today = new Date()
+  const weekAgo = new Date(today)
+  weekAgo.setDate(weekAgo.getDate() - 7)
+  excludeRangeDateFrom.value = getDateString(weekAgo)
+  excludeRangeDateTo.value = getDateString(today)
+  showExcludeRangeModal.value = true
+}
+
+const executeExcludeByRange = async () => {
+  excludingByRange.value = true
+  try {
+    const result = await bridgeService.setTimesheetExcludedByDateRange(
+      excludeRangeDateFrom.value,
+      excludeRangeDateTo.value,
+      true
+    )
+    success(result.message)
+    showExcludeRangeModal.value = false
+    await loadData()
+  } catch (err) {
+    error(`Failed to mark records: ${err.message}`)
+  } finally {
+    excludingByRange.value = false
+  }
+}
+
+// Delete selected state
+const showDeleteSelectedModal = ref(false)
+const deletingSelected = ref(false)
+
+const confirmDeleteSelected = () => {
+  if (selectedIds.value.length === 0) return
+  showDeleteSelectedModal.value = true
+}
+
+const executeDeleteSelected = async () => {
+  deletingSelected.value = true
+  try {
+    const result = await bridgeService.deleteTimesheetsByIds(selectedIds.value)
+    success(result.message)
+    showDeleteSelectedModal.value = false
+    selectedIds.value = []
+    await loadData()
+  } catch (err) {
+    error(`Failed to delete records: ${err.message}`)
+  } finally {
+    deletingSelected.value = false
+  }
 }
 
 // Clear modal state
@@ -490,6 +650,7 @@ const filteredTimesheets = computed(() => {
   }
 
   // Filter by status
+  // 'deleted' records are pre-filtered by the backend endpoint — no extra filter needed
   if (filterStatus.value === 'synced') {
     filtered = filtered.filter(t => t.backend_timesheet_id !== null)
   } else if (filterStatus.value === 'pending') {
@@ -523,12 +684,25 @@ const paginatedTimesheets = computed(() => {
   return filteredTimesheets.value.slice(start, end)
 })
 
+const formatDateTime = (isoStr) => {
+  if (!isoStr) return ''
+  // SQLite returns strings like "2026-06-01 08:00:00.123456"
+  const d = new Date(isoStr.replace(' ', 'T'))
+  if (isNaN(d)) return isoStr
+  return d.toLocaleString()
+}
+
 const loadData = async () => {
   loading.value = true
   try {
-    // Load timesheets
-    const result = await bridgeService.getAllTimesheets(5000, 0)
-    timesheets.value = result.data
+    // Deleted records come from a separate endpoint; they're never mixed with live records
+    if (filterStatus.value === 'deleted') {
+      const result = await bridgeService.getDeletedTimesheets(5000, 0)
+      timesheets.value = result.data
+    } else {
+      const result = await bridgeService.getAllTimesheets(5000, 0)
+      timesheets.value = result.data
+    }
 
     // Load devices for filter dropdown
     const devicesResult = await bridgeService.getDevices()
