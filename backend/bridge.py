@@ -65,6 +65,16 @@ class Bridge(QObject):
             logger.error(f"Error getting timesheets: {e}")
             return json.dumps({"success": False, "error": str(e)})
 
+    @pyqtSlot(int, int, result=str)
+    def getDeletedTimesheets(self, limit=1000, offset=0):
+        """Get soft-deleted (cleared) timesheets with pagination"""
+        try:
+            timesheets = self.database.get_deleted_timesheets(limit, offset)
+            return json.dumps({"success": True, "data": timesheets})
+        except Exception as e:
+            logger.error(f"Error getting deleted timesheets: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
     @pyqtSlot(int, result=str)
     def getUnsyncedTimesheets(self, limit=100):
         """Get unsynced timesheets"""
@@ -96,23 +106,38 @@ class Bridge(QObject):
 
     @pyqtSlot(str, str, bool, result=str)
     def clearTimesheets(self, date_from, date_to, only_synced=True):
-        """Clear timesheet records within a date range"""
+        """Clear timesheet records within a date range.
+
+        All deleted records are soft-deleted (deleted_at set) regardless of
+        whether they were synced. This preserves the sync_id in the database so
+        the biometric device cannot re-supply the same log on a future pull —
+        the UNIQUE constraint on sync_id blocks re-insertion and the record
+        never re-enters the push queue.
+        """
         try:
             conn = self.database.get_connection()
             cursor = conn.cursor()
+            now = datetime.now()
 
-            # Delete timesheets within the date range
             if only_synced:
+                # Soft-delete only synced records
                 cursor.execute("""
-                    DELETE FROM timesheet
+                    UPDATE timesheet
+                    SET deleted_at = ?
                     WHERE date >= ? AND date <= ?
                     AND backend_timesheet_id IS NOT NULL
-                """, (date_from, date_to))
+                    AND deleted_at IS NULL
+                """, (now, date_from, date_to))
             else:
+                # Soft-delete all records (synced and unsynced).
+                # Unsynced records are also soft-deleted so that a re-pull from
+                # the device does not bring them back — once deleted, they stay gone.
                 cursor.execute("""
-                    DELETE FROM timesheet
+                    UPDATE timesheet
+                    SET deleted_at = ?
                     WHERE date >= ? AND date <= ?
-                """, (date_from, date_to))
+                    AND deleted_at IS NULL
+                """, (now, date_from, date_to))
 
             deleted_count = cursor.rowcount
             conn.commit()
@@ -220,6 +245,55 @@ class Bridge(QObject):
     def startPushSync(self):
         """Manually trigger push sync to cloud payroll (runs in background thread)"""
         return self._start_push_sync(timesheet_ids=None)
+
+    @pyqtSlot(str, result=str)
+    def deleteTimesheetsByIds(self, ids_json):
+        """Soft-delete specific timesheet records by ID.
+
+        Args:
+            ids_json: JSON-encoded list of timesheet IDs to delete.
+        """
+        try:
+            ids = json.loads(ids_json) if ids_json else []
+        except (ValueError, TypeError) as e:
+            logger.error(f"Invalid timesheet ids payload: {e}")
+            return json.dumps({"success": False, "error": "Invalid timesheet ids"})
+
+        ids = [int(i) for i in ids if i is not None]
+        if not ids:
+            return json.dumps({"success": False, "error": "No timesheet IDs provided"})
+
+        try:
+            deleted = self.database.soft_delete_timesheets_by_ids(ids)
+            return json.dumps({
+                "success": True,
+                "deleted": deleted,
+                "message": f"{deleted} record(s) deleted"
+            })
+        except Exception as e:
+            logger.error(f"Error deleting timesheets by ids: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
+    @pyqtSlot(str, str, bool, result=str)
+    def setTimesheetExcludedByDateRange(self, date_from, date_to, excluded):
+        """Mark or unmark all unsynced timesheets within a date range as excluded from sync.
+
+        Args:
+            date_from: Start date string (YYYY-MM-DD).
+            date_to:   End date string (YYYY-MM-DD).
+            excluded:  True to mark as do-not-sync, False to unmark.
+        """
+        try:
+            updated = self.database.set_timesheets_excluded_by_date_range(date_from, date_to, bool(excluded))
+            verb = "marked as do-not-sync" if excluded else "unmarked"
+            return json.dumps({
+                "success": True,
+                "updated": updated,
+                "message": f"{updated} record(s) {verb}"
+            })
+        except Exception as e:
+            logger.error(f"Error updating exclusion flag by date range: {e}")
+            return json.dumps({"success": False, "error": str(e)})
 
     @pyqtSlot(str, bool, result=str)
     def setTimesheetExcluded(self, ids_json, excluded):

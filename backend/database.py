@@ -294,6 +294,13 @@ class Database:
             except:
                 pass  # Column already exists
 
+            # Add deleted_at to timesheet for soft-delete (preserves sync_id history to prevent re-push)
+            try:
+                cursor.execute("ALTER TABLE timesheet ADD COLUMN deleted_at DATETIME")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_timesheet_deleted_at ON timesheet(deleted_at)")
+            except:
+                pass  # Column already exists
+
             # Create indexes for deleted_at (after column exists)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_device_deleted_at ON device(deleted_at)")
             cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_device_unique_ip_active ON device(ip) WHERE deleted_at IS NULL")
@@ -362,6 +369,7 @@ class Database:
                 WHERE t.backend_timesheet_id IS NULL
                 AND t.status = 'success'
                 AND COALESCE(t.excluded_from_sync, 0) = 0
+                AND t.deleted_at IS NULL
                 ORDER BY t.created_at ASC
                 LIMIT ?
             """, (limit,))
@@ -386,6 +394,7 @@ class Database:
                 WHERE t.backend_timesheet_id IS NULL
                 AND t.status = 'success'
                 AND COALESCE(t.excluded_from_sync, 0) = 0
+                AND t.deleted_at IS NULL
                 AND t.id IN ({placeholders})
                 ORDER BY t.created_at ASC
             """, tuple(ids))
@@ -444,8 +453,36 @@ class Database:
                     SUM(CASE WHEN sync_error_message IS NOT NULL AND COALESCE(excluded_from_sync, 0) = 0 THEN 1 ELSE 0 END) as errors,
                     SUM(CASE WHEN COALESCE(excluded_from_sync, 0) = 1 AND backend_timesheet_id IS NULL THEN 1 ELSE 0 END) as excluded
                 FROM timesheet
+                WHERE deleted_at IS NULL
             """)
             return dict(cursor.fetchone())
+        finally:
+            conn.close()
+
+    def soft_delete_timesheets_by_ids(self, ids):
+        """Soft-delete specific timesheet records by ID.
+
+        Sets deleted_at on every row in the list that hasn't been soft-deleted
+        yet. Returns the number of rows updated.
+        """
+        if not ids:
+            return 0
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            placeholders = ','.join('?' for _ in ids)
+            cursor.execute(f"""
+                UPDATE timesheet
+                SET deleted_at = ?
+                WHERE id IN ({placeholders})
+                AND deleted_at IS NULL
+            """, (datetime.now(), *ids))
+            conn.commit()
+            return cursor.rowcount
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Error soft-deleting timesheets by ids: {e}")
+            raise
         finally:
             conn.close()
 
@@ -477,6 +514,31 @@ class Database:
         finally:
             conn.close()
 
+    def set_timesheets_excluded_by_date_range(self, date_from, date_to, excluded):
+        """Mark or unmark all unsynced timesheets within a date range as excluded from sync.
+
+        Already-synced rows (backend_timesheet_id IS NOT NULL) and soft-deleted
+        rows are not modified. Returns the number of rows updated.
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE timesheet
+                SET excluded_from_sync = ?
+                WHERE date >= ? AND date <= ?
+                AND backend_timesheet_id IS NULL
+                AND deleted_at IS NULL
+            """, (1 if excluded else 0, date_from, date_to))
+            conn.commit()
+            return cursor.rowcount
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Error updating excluded_from_sync by date range: {e}")
+            raise
+        finally:
+            conn.close()
+
     def get_timesheet_by_sync_id(self, sync_id):
         """Get a timesheet entry by sync_id"""
         conn = self.get_connection()
@@ -485,6 +547,25 @@ class Database:
             cursor.execute("SELECT * FROM timesheet WHERE sync_id = ?", (sync_id,))
             row = cursor.fetchone()
             return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def get_deleted_timesheets(self, limit=1000, offset=0):
+        """Get soft-deleted timesheet entries with pagination"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT t.*, e.name as employee_name, e.employee_code,
+                       d.name as device_name
+                FROM timesheet t
+                JOIN employee e ON t.employee_id = e.id
+                LEFT JOIN device d ON t.device_id = d.id
+                WHERE t.deleted_at IS NOT NULL
+                ORDER BY t.deleted_at DESC
+                LIMIT ? OFFSET ?
+            """, (limit, offset))
+            return [dict(row) for row in cursor.fetchall()]
         finally:
             conn.close()
 
@@ -499,6 +580,7 @@ class Database:
                 FROM timesheet t
                 JOIN employee e ON t.employee_id = e.id
                 LEFT JOIN device d ON t.device_id = d.id
+                WHERE t.deleted_at IS NULL
                 ORDER BY t.date DESC, t.time DESC
                 LIMIT ? OFFSET ?
             """, (limit, offset))
