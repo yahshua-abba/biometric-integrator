@@ -11,7 +11,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-GITHUB_API_URL = "https://api.github.com/repos/ysc-payroll/integrator_sanbeda_taytay/releases/latest"
+GITHUB_API_URL = "https://api.github.com/repos/yahshua-abba/biometric-integrator/releases/latest"
 
 
 def parse_version(version_str):
@@ -75,7 +75,7 @@ def check_for_updates(current_version):
         raise Exception(f"Failed to check for updates: {e}")
 
 
-GITHUB_ALL_RELEASES_URL = "https://api.github.com/repos/ysc-payroll/integrator_sanbeda_taytay/releases"
+GITHUB_ALL_RELEASES_URL = "https://api.github.com/repos/yahshua-abba/biometric-integrator/releases"
 MIN_RELEASE_VERSION = (1, 0, 15)
 
 
