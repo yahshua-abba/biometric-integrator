@@ -517,8 +517,21 @@ const faqItems = [
   {
     question: 'What is the Branch ID for?',
     answer: `
-      <p>The Branch ID is an optional field that tells the payroll system which branch or location the attendance data belongs to. This is useful when you have multiple ZKTeco devices across different office locations.</p>
-      <p class="mt-2">If your organization uses a single branch, you can leave this blank. Check with your payroll administrator for the correct Branch ID value.</p>
+      <p>The Branch ID limits a device's attendance logs to employees in one <strong>Location</strong> in YAHSHUA Payroll. When set, the payroll system only matches the punch to an active employee whose Location name matches this value.</p>
+
+      <p class="mt-2"><strong>It must match the employee's Location name in YAHSHUA</strong> &mdash; not a code you invent. The match is case-insensitive and allows partial text (e.g. <em>MAI</em> matches <em>MAIN</em>). If it doesn't match, logs fail to sync with the error <em>"No Employee" (error code 2)</em>.</p>
+
+      <p class="mt-2"><strong>Where to find the correct value in YAHSHUA Payroll:</strong></p>
+      <ul class="list-disc ml-5 mt-1 space-y-1">
+        <li>On an employee: <em>Employees &rarr; (open employee) &rarr; Job Information &rarr; Location</em> (e.g. "MAIN")</li>
+        <li>Full list of locations: <em>Settings &rarr; Company &rarr; Locations</em></li>
+      </ul>
+
+      <p class="mt-2"><strong>When to set it:</strong> only when the same biometric IDs repeat across different locations and you need to point each device at the right one. Enter this device's Location name exactly as it appears in YAHSHUA.</p>
+
+      <p class="mt-2"><strong>When to leave it blank:</strong> for a single-location company, or when biometric IDs are unique across the whole company. Blank means the payroll system matches the employee company-wide by ID, which is simpler and avoids Location-name mismatches.</p>
+
+      <p class="mt-2 text-red-600"><strong>Note:</strong> This field only applies when YAHSHUA is set to <strong>"Use Biometrics ID"</strong> (Settings &rarr; Companies &rarr; General Settings &rarr; Timesheets and Timekeeper Settings &rarr; Biometric Integration).</p>
     `
   },
   {
