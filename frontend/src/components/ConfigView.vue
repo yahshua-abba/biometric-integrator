@@ -8,7 +8,7 @@
         <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
         </svg>
-        Push Configuration
+        Push Configuration 1 (Primary Payroll)
       </h2>
 
       <div class="space-y-4">
@@ -17,6 +17,7 @@
           <label class="label">API URL</label>
           <input
             v-model="form.push_url"
+            @blur="persistUrl(1)"
             type="url"
             placeholder="https://yahshuapayroll.com/api"
             class="input"
@@ -105,6 +106,151 @@
             <span v-if="!loggingIn">Login</span>
             <span v-else>Logging in...</span>
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Push Configuration 2 (Secondary Payroll) - optional -->
+    <div class="card">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-xl font-semibold flex items-center gap-2">
+          <svg class="w-6 h-6 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          Push Configuration 2 (Secondary Payroll)
+        </h2>
+        <!-- Enable toggle -->
+        <label class="inline-flex items-center cursor-pointer">
+          <span class="mr-2 text-sm text-gray-600">{{ config2Enabled ? 'Enabled' : 'Disabled' }}</span>
+          <input
+            type="checkbox"
+            class="sr-only peer"
+            :checked="config2Enabled"
+            :disabled="togglingConfig2"
+            @change.prevent="handleToggleConfig2"
+          />
+          <div class="relative w-11 h-6 bg-gray-200 rounded-full peer peer-checked:bg-emerald-500 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:border after:rounded-full after:h-5 after:w-5 after:transition-all"></div>
+        </label>
+      </div>
+
+      <p class="text-sm text-gray-500 mb-4">
+        Send a copy of every timesheet log to a second payroll system at the same time.
+        Each destination tracks its own sync status independently.
+      </p>
+
+      <div v-if="config2Enabled" class="space-y-4">
+        <!-- API URL -->
+        <div>
+          <label class="label">API URL</label>
+          <input
+            v-model="form.push_url_2"
+            @blur="persistUrl(2)"
+            type="url"
+            placeholder="https://yahshuapayroll.com/api"
+            class="input"
+          />
+          <p class="text-sm text-gray-500 mt-1">
+            Second payroll API endpoint.
+          </p>
+        </div>
+
+        <!-- Logged In State -->
+        <div v-if="pushLoggedIn2">
+          <div class="bg-green-50 border border-green-200 rounded-lg p-4">
+            <div class="flex items-center gap-2 mb-2">
+              <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span class="font-semibold text-green-800">Connected to Second Payroll System</span>
+            </div>
+            <p class="text-green-800">
+              Logged in as <strong>{{ pushUserLogged2 }}</strong><br/>
+              <span class="text-sm">({{ form.push_username_2 }})</span>
+            </p>
+            <p class="text-sm text-green-600 mt-2">
+              Last login: {{ pushTokenCreatedAt2 }}
+            </p>
+          </div>
+
+          <button
+            @click="logoutPush2"
+            :disabled="loggingOut2"
+            class="btn btn-secondary mt-4"
+          >
+            <span v-if="!loggingOut2">Logout</span>
+            <span v-else>Logging out...</span>
+          </button>
+        </div>
+
+        <!-- Logged Out State -->
+        <div v-else>
+          <div class="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
+            <p class="text-sm text-gray-600">
+              <strong>Second Payroll API</strong><br/>
+              Login to connect and sync timesheet data to this destination.
+            </p>
+          </div>
+
+          <div>
+            <label class="label">Email / Username</label>
+            <input
+              v-model="form.push_username_2"
+              type="email"
+              placeholder="timekeeping@company.com"
+              class="input"
+            />
+          </div>
+
+          <div>
+            <label class="label">Password</label>
+            <input
+              v-model="form.push_password_2"
+              type="password"
+              placeholder="Enter password"
+              class="input"
+            />
+          </div>
+
+          <button
+            @click="loginPush2"
+            :disabled="!form.push_username_2 || !form.push_password_2 || loggingIn2"
+            class="btn btn-primary mt-4"
+          >
+            <span v-if="!loggingIn2">Login</span>
+            <span v-else>Logging in...</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Enable Config 2 history choice modal -->
+    <div v-if="showEnable2Modal" class="fixed inset-0 z-50 flex items-center justify-center">
+      <div class="absolute inset-0 bg-black bg-opacity-50" @click="showEnable2Modal = false"></div>
+      <div class="relative bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
+        <h3 class="text-lg font-semibold mb-2">Enable second destination</h3>
+        <p class="text-sm text-gray-600 mb-4">
+          What should happen to timesheet logs that already exist in this app?
+        </p>
+        <div class="space-y-3">
+          <button
+            @click="confirmEnableConfig2(false)"
+            :disabled="togglingConfig2"
+            class="w-full text-left border rounded-lg p-3 hover:bg-gray-50"
+          >
+            <div class="font-medium text-gray-900">Only send new logs from now on <span class="text-emerald-600">(Recommended)</span></div>
+            <div class="text-sm text-gray-500">Existing records are marked as already handled for this destination.</div>
+          </button>
+          <button
+            @click="confirmEnableConfig2(true)"
+            :disabled="togglingConfig2"
+            class="w-full text-left border rounded-lg p-3 hover:bg-gray-50"
+          >
+            <div class="font-medium text-gray-900">Send all existing history too</div>
+            <div class="text-sm text-gray-500">Every stored log not yet on this destination will be pushed on the next sync.</div>
+          </button>
+        </div>
+        <div class="mt-4 text-right">
+          <button @click="showEnable2Modal = false" :disabled="togglingConfig2" class="btn btn-secondary">Cancel</button>
         </div>
       </div>
     </div>
@@ -401,7 +547,11 @@ const form = ref({
   push_url: DEFAULT_PUSH_URL,
   push_username: '',
   push_password: '',
-  push_interval_minutes: 15
+  push_interval_minutes: 15,
+  // Second push destination (Config 2)
+  push_url_2: DEFAULT_PUSH_URL,
+  push_username_2: '',
+  push_password_2: ''
 })
 
 const saving = ref(false)
@@ -418,17 +568,29 @@ const debouncedSave = () => {
   }, 500)
 }
 
-// Auto-save when intervals or URL change
+// Auto-save only the standalone sync intervals. The API URLs are intentionally
+// NOT auto-saved — they are persisted as part of the Login action so that merely
+// editing the connection form does not announce "Settings saved" before the user
+// has logged in.
 watch(() => form.value.pull_interval_minutes, debouncedSave)
 watch(() => form.value.push_interval_minutes, debouncedSave)
-watch(() => form.value.push_url, debouncedSave)
 
-// Payroll login state
+// Payroll login state (Config 1)
 const pushLoggedIn = ref(false)
 const pushUserLogged = ref('')
 const pushTokenCreatedAt = ref('')
 const loggingIn = ref(false)
 const loggingOut = ref(false)
+
+// Second payroll destination (Config 2) state
+const config2Enabled = ref(false)
+const togglingConfig2 = ref(false)
+const showEnable2Modal = ref(false)
+const pushLoggedIn2 = ref(false)
+const pushUserLogged2 = ref('')
+const pushTokenCreatedAt2 = ref('')
+const loggingIn2 = ref(false)
+const loggingOut2 = ref(false)
 
 // Device management state
 const devices = ref([])
@@ -466,13 +628,22 @@ const loadConfig = async () => {
         push_url: result.data.push_url || DEFAULT_PUSH_URL,
         push_username: result.data.push_username || '',
         push_password: '',  // Never prefill password
-        push_interval_minutes: result.data.push_interval_minutes || 15
+        push_interval_minutes: result.data.push_interval_minutes || 15,
+        push_url_2: result.data.push_url_2 || DEFAULT_PUSH_URL,
+        push_username_2: result.data.push_username_2 || '',
+        push_password_2: ''  // Never prefill password
       }
 
-      // Set Payroll login state
+      // Set Payroll login state (Config 1)
       pushLoggedIn.value = result.data.push_token_exists || false
       pushUserLogged.value = result.data.push_user_logged || ''
       pushTokenCreatedAt.value = result.data.push_token_created_at || ''
+
+      // Set second destination state (Config 2)
+      config2Enabled.value = result.data.push_enabled_2 || false
+      pushLoggedIn2.value = result.data.push_token_2_exists || false
+      pushUserLogged2.value = result.data.push_user_logged_2 || ''
+      pushTokenCreatedAt2.value = result.data.push_token_created_at_2 || ''
     }
 
     // Load devices
@@ -631,40 +802,111 @@ const formatDateTime = (dateStr) => {
   }
 }
 
-const loginPush = async () => {
-  loggingIn.value = true
+// Silently persist just the API URL (no toast). Used on blur so an edited URL is
+// kept without implying that login/credentials were saved.
+const persistUrl = async (slot) => {
+  if (!configLoaded.value) return
+  const isSecond = slot === 2
+  const url = isSecond ? form.value.push_url_2 : form.value.push_url
+  if (!url) return
   try {
-    const result = await bridgeService.loginPush(form.value.push_username, form.value.push_password)
-    if (result.success) {
-      pushLoggedIn.value = true
-      pushUserLogged.value = result.user_logged
-      pushTokenCreatedAt.value = new Date().toLocaleString()
-      form.value.push_password = ''  // Clear password from form
-      success(result.message)
-    } else {
-      error(result.error || 'Login failed')
-    }
+    await bridgeService.updateApiConfig(isSecond ? { push_url_2: url } : { push_url: url })
   } catch (err) {
-    error(`Login failed: ${err.message}`)
-  } finally {
-    loggingIn.value = false
+    console.error('Failed to persist API URL:', err)
   }
 }
 
-const logoutPush = async () => {
-  loggingOut.value = true
+const doLoginPush = async (slot) => {
+  const isSecond = slot === 2
+  const username = isSecond ? form.value.push_username_2 : form.value.push_username
+  const password = isSecond ? form.value.push_password_2 : form.value.push_password
+  const url = isSecond ? form.value.push_url_2 : form.value.push_url
+  const loadingRef = isSecond ? loggingIn2 : loggingIn
+  loadingRef.value = true
   try {
-    const result = await bridgeService.logoutPush()
-    if (result.success) {
+    // Persist the API URL first (silently) so authentication uses the entered endpoint
+    if (url) {
+      await bridgeService.updateApiConfig(isSecond ? { push_url_2: url } : { push_url: url })
+    }
+    const result = await bridgeService.loginPush(username, password, slot)
+    if (isSecond) {
+      pushLoggedIn2.value = true
+      pushUserLogged2.value = result.user_logged
+      pushTokenCreatedAt2.value = new Date().toLocaleString()
+      form.value.push_password_2 = ''
+    } else {
+      pushLoggedIn.value = true
+      pushUserLogged.value = result.user_logged
+      pushTokenCreatedAt.value = new Date().toLocaleString()
+      form.value.push_password = ''
+    }
+    success(result.message)
+  } catch (err) {
+    error(`Login failed: ${err.message}`)
+  } finally {
+    loadingRef.value = false
+  }
+}
+
+const doLogoutPush = async (slot) => {
+  const isSecond = slot === 2
+  const loadingRef = isSecond ? loggingOut2 : loggingOut
+  loadingRef.value = true
+  try {
+    await bridgeService.logoutPush(slot)
+    if (isSecond) {
+      pushLoggedIn2.value = false
+      pushUserLogged2.value = ''
+      pushTokenCreatedAt2.value = ''
+    } else {
       pushLoggedIn.value = false
       pushUserLogged.value = ''
       pushTokenCreatedAt.value = ''
-      success('Logged out successfully')
     }
+    success('Logged out successfully')
   } catch (err) {
     error(`Logout failed: ${err.message}`)
   } finally {
-    loggingOut.value = false
+    loadingRef.value = false
+  }
+}
+
+const loginPush = () => doLoginPush(1)
+const logoutPush = () => doLogoutPush(1)
+const loginPush2 = () => doLoginPush(2)
+const logoutPush2 = () => doLogoutPush(2)
+
+// Enable/disable the second push destination
+const handleToggleConfig2 = async () => {
+  if (config2Enabled.value) {
+    // Currently enabled -> disable
+    togglingConfig2.value = true
+    try {
+      await bridgeService.setPushConfig2Enabled(false, false)
+      config2Enabled.value = false
+      info('Second destination disabled')
+    } catch (err) {
+      error(`Failed to disable: ${err.message}`)
+    } finally {
+      togglingConfig2.value = false
+    }
+  } else {
+    // Ask how to treat existing history before enabling
+    showEnable2Modal.value = true
+  }
+}
+
+const confirmEnableConfig2 = async (pushHistory) => {
+  togglingConfig2.value = true
+  try {
+    const result = await bridgeService.setPushConfig2Enabled(true, pushHistory)
+    config2Enabled.value = true
+    showEnable2Modal.value = false
+    success(result.message || 'Second destination enabled')
+  } catch (err) {
+    error(`Failed to enable: ${err.message}`)
+  } finally {
+    togglingConfig2.value = false
   }
 }
 

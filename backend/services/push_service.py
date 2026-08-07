@@ -71,10 +71,20 @@ def get_friendly_http_error(status_code):
 
 
 class PushService:
-    """Service for pushing data to YAHSHUA Payroll cloud system"""
+    """Service for pushing data to a YAHSHUA Payroll cloud system.
 
-    def __init__(self, database):
+    Each instance is bound to a push "slot": slot 1 is the primary destination,
+    slot 2 is the optional second destination. The slot selects which set of
+    api_config columns (push_url[_2], push_username[_2], ...) and which timesheet
+    status columns are read/written, so two instances can push the same logs to
+    two independent payroll systems simultaneously.
+    """
+
+    def __init__(self, database, slot=1):
         self.database = database
+        self.slot = int(slot)
+        self.suffix = '_2' if self.slot == 2 else ''
+        self.label = "Payroll 2 (Secondary)" if self.slot == 2 else "Payroll 1 (Primary)"
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Biometric Integration/1.0',
@@ -82,11 +92,20 @@ class PushService:
             'Content-Type': 'application/json'
         })
 
+    def _cfg_key(self, base):
+        """Map a base config field name to this slot's column (adds _2 for slot 2)."""
+        return f"{base}{self.suffix}"
+
     def get_base_url(self):
         """Get the YAHSHUA API base URL from config or use default"""
         config = self.database.get_api_config()
-        url = (config or {}).get('push_url') or DEFAULT_YAHSHUA_BASE_URL
+        url = (config or {}).get(self._cfg_key('push_url')) or DEFAULT_YAHSHUA_BASE_URL
         return url.rstrip('/')
+
+    def is_configured(self):
+        """Whether this slot has credentials configured (used to decide if it should run)."""
+        config = self.database.get_api_config() or {}
+        return bool(config.get(self._cfg_key('push_username')) and config.get(self._cfg_key('push_password')))
 
     def get_config(self):
         """Get push configuration from database"""
@@ -94,7 +113,7 @@ class PushService:
         if not config:
             raise Exception("API configuration not found")
 
-        if not config.get('push_username') or not config.get('push_password'):
+        if not config.get(self._cfg_key('push_username')) or not config.get(self._cfg_key('push_password')):
             raise Exception("YAHSHUA credentials not configured")
 
         return config
@@ -114,10 +133,10 @@ class PushService:
         try:
             if not username or not password:
                 config = self.get_config()
-                username = config.get('push_username')
-                password = config.get('push_password')
+                username = config.get(self._cfg_key('push_username'))
+                password = config.get(self._cfg_key('push_password'))
 
-            logger.info(f"Authenticating to YAHSHUA as {username}")
+            logger.info(f"Authenticating to YAHSHUA ({self.label}) as {username}")
 
             payload = {
                 "username": username,
@@ -146,9 +165,9 @@ class PushService:
                     raise Exception("No token in response")
 
                 # Store token and user info in database
-                self.database.update_push_token(token, user_logged)
+                self.database.update_push_token(token, user_logged, slot=self.slot)
 
-                logger.info(f"YAHSHUA authentication successful. User: {user_logged}, Company: {company_name}")
+                logger.info(f"YAHSHUA authentication successful ({self.label}). User: {user_logged}, Company: {company_name}")
                 return {
                     'token': token,
                     'user_logged': user_logged,
@@ -174,10 +193,10 @@ class PushService:
 
     def get_valid_token(self):
         """Get a valid token, authenticating if necessary"""
-        token = self.database.get_push_token()
+        token = self.database.get_push_token(slot=self.slot)
 
         if token:
-            logger.info("Using existing YAHSHUA token")
+            logger.info(f"Using existing YAHSHUA token ({self.label})")
             return token
 
         logger.info("No valid token found, authenticating...")
@@ -224,11 +243,11 @@ class PushService:
             # Get token
             token = self.get_valid_token()
 
-            # Get unsynced timesheets (filtered by ids if provided)
+            # Get unsynced timesheets (filtered by ids if provided) for this slot
             if timesheet_ids:
-                all_unsynced = self.database.get_unsynced_timesheets_by_ids(timesheet_ids)
+                all_unsynced = self.database.get_unsynced_timesheets_by_ids(timesheet_ids, slot=self.slot)
             else:
-                all_unsynced = self.database.get_unsynced_timesheets(limit=10000)
+                all_unsynced = self.database.get_unsynced_timesheets(limit=10000, slot=self.slot)
             logger.info(f"Found {len(all_unsynced)} unsynced timesheet records")
 
             if len(all_unsynced) == 0:
@@ -313,7 +332,7 @@ class PushService:
 
                     # Mark successful logs
                     for local_id in logs_synced:
-                        self.database.mark_timesheet_synced(local_id, local_id)
+                        self.database.mark_timesheet_synced(local_id, local_id, slot=self.slot)
                         stats['success'] += 1
                         logger.info(f"Timesheet {local_id} synced successfully")
 
@@ -324,7 +343,7 @@ class PushService:
                         error_code = failed_log.get('error_code', 0)
 
                         friendly_msg = get_friendly_yahshua_error(error_code, reason)
-                        self.database.mark_timesheet_sync_failed(local_id, friendly_msg)
+                        self.database.mark_timesheet_sync_failed(local_id, friendly_msg, slot=self.slot)
                         stats['failed'] += 1
                         logger.warning(f"Timesheet {local_id} failed (code {error_code}): {reason} -> {friendly_msg}")
 
@@ -340,7 +359,8 @@ class PushService:
                     for log_entry in batch:
                         self.database.mark_timesheet_sync_failed(
                             log_entry['id'],
-                            batch_error
+                            batch_error,
+                            slot=self.slot
                         )
                         stats['failed'] += 1
 
@@ -444,8 +464,8 @@ class PushService:
 
             elif response.status_code == 401:
                 # Token expired, try to re-authenticate
-                logger.warning("Token expired, re-authenticating...")
-                self.database.update_push_token(None)
+                logger.warning(f"Token expired ({self.label}), re-authenticating...")
+                self.database.update_push_token(None, slot=self.slot)
                 auth_result = self.authenticate()
                 # Retry once with new token
                 headers['Authorization'] = f'Token {auth_result["token"]}'
@@ -475,5 +495,5 @@ class PushService:
 
     def invalidate_token(self):
         """Invalidate the current token (force re-authentication)"""
-        self.database.update_push_token(None)
-        logger.info("Push token invalidated")
+        self.database.update_push_token(None, slot=self.slot)
+        logger.info(f"Push token invalidated ({self.label})")

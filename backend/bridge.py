@@ -31,17 +31,35 @@ class Bridge(QObject):
     syncCompleted = pyqtSignal(str)  # Emits JSON string with results
     updateDownloadProgress = pyqtSignal(str)  # Emits JSON string with download progress
 
-    def __init__(self, database, pull_service, push_service, scheduler=None):
+    def __init__(self, database, pull_service, push_service, scheduler=None, push_service_2=None):
         super().__init__()
         self.database = database
         self.pull_service = pull_service
         self.push_service = push_service
+        self.push_service_2 = push_service_2
         self.scheduler = scheduler
         logger.info("Bridge initialized")
 
     def set_scheduler(self, scheduler):
         """Set the scheduler reference (called after scheduler is created)"""
         self.scheduler = scheduler
+
+    def _push_service_for_slot(self, slot):
+        """Return the PushService bound to the given slot (falls back to primary)."""
+        if int(slot) == 2 and self.push_service_2 is not None:
+            return self.push_service_2
+        return self.push_service
+
+    def _active_push_services(self):
+        """Return the push services that should run: primary always, secondary
+        only when it is enabled in config and has credentials configured."""
+        services = [self.push_service]
+        config = self.database.get_api_config() or {}
+        if (self.push_service_2 is not None
+                and config.get('push_enabled_2')
+                and self.push_service_2.is_configured()):
+            services.append(self.push_service_2)
+        return services
 
     # ==================== TIMESHEET METHODS ====================
 
@@ -87,14 +105,18 @@ class Bridge(QObject):
 
     @pyqtSlot(int, result=str)
     def retryFailedTimesheet(self, timesheet_id):
-        """Retry syncing a failed timesheet"""
+        """Retry syncing a failed timesheet.
+
+        Clears the error message for both destinations so the record re-enters the
+        push queue of whichever destination(s) it has not yet synced to.
+        """
         try:
-            # Clear error message to retry
             conn = self.database.get_connection()
             cursor = conn.cursor()
             cursor.execute("""
                 UPDATE timesheet
-                SET sync_error_message = NULL
+                SET sync_error_message = NULL,
+                    sync_error_message_2 = NULL
                 WHERE id = ?
             """, (timesheet_id,))
             conn.commit()
@@ -345,42 +367,79 @@ class Bridge(QObject):
         return self._start_push_sync(timesheet_ids=ids)
 
     def _start_push_sync(self, timesheet_ids=None):
-        """Shared implementation: run push in a background thread."""
+        """Shared implementation: push to every active destination simultaneously.
+
+        Each enabled push slot runs in its own thread with its own token/session
+        and its own per-record status columns, so the same logs are delivered to
+        both payroll systems at once. A single combined result is emitted once all
+        destinations finish.
+        """
         scope = f"{len(timesheet_ids)} selected records" if timesheet_ids else "all unsynced"
-        logger.info(f"Manual push sync triggered from UI: {scope}")
+        services = self._active_push_services()
+        logger.info(f"Manual push sync triggered from UI: {scope} -> {[s.label for s in services]}")
 
-        def run_push():
-            try:
-                # Progress callback to emit updates to frontend
-                def on_progress(progress_dict):
-                    logger.info(f"Emitting progress: {progress_dict}")
-                    self.syncProgressUpdated.emit(json.dumps(progress_dict))
+        def run_all():
+            results = {}
+            lock = threading.Lock()
 
-                success, message, stats = self.push_service.push_data(
-                    progress_callback=on_progress,
-                    timesheet_ids=timesheet_ids
-                )
+            def run_one(svc):
+                try:
+                    def on_progress(progress_dict):
+                        payload = dict(progress_dict)
+                        payload['slot'] = svc.slot
+                        payload['config_label'] = svc.label
+                        payload['config_total'] = len(services)
+                        self.syncProgressUpdated.emit(json.dumps(payload))
 
-                result = {
-                    "success": success,
-                    "message": message,
-                    "stats": stats
+                    success, message, stats = svc.push_data(
+                        progress_callback=on_progress,
+                        timesheet_ids=timesheet_ids
+                    )
+                    with lock:
+                        results[svc.slot] = {
+                            "slot": svc.slot, "label": svc.label,
+                            "success": success, "message": message, "stats": stats
+                        }
+                except Exception as e:
+                    logger.error(f"Error in push sync thread ({svc.label}): {e}")
+                    with lock:
+                        results[svc.slot] = {
+                            "slot": svc.slot, "label": svc.label,
+                            "success": False, "error": str(e), "stats": {}
+                        }
+
+            threads = []
+            for svc in services:
+                t = threading.Thread(target=run_one, args=(svc,), daemon=True)
+                t.start()
+                threads.append(t)
+            for t in threads:
+                t.join()
+
+            # Aggregate results across all destinations
+            overall_success = all(r.get("success") for r in results.values())
+            agg = {"processed": 0, "success": 0, "failed": 0, "skipped": 0}
+            parts = []
+            for slot in sorted(results):
+                r = results[slot]
+                for key in agg:
+                    agg[key] += (r.get("stats") or {}).get(key, 0)
+                detail = r.get("error") or r.get("message") or ""
+                parts.append(f"{r['label']}: {detail}")
+
+            combined_message = "  |  ".join(parts) if parts else "No push destinations configured"
+
+            self.syncCompleted.emit(json.dumps({
+                "type": "push",
+                "result": {
+                    "success": overall_success,
+                    "message": combined_message,
+                    "stats": agg,
+                    "per_config": list(results.values())
                 }
+            }))
 
-                # Emit signal to update UI
-                self.syncCompleted.emit(json.dumps({
-                    "type": "push",
-                    "result": result
-                }))
-
-            except Exception as e:
-                logger.error(f"Error in push sync thread: {e}")
-                self.syncCompleted.emit(json.dumps({
-                    "type": "push",
-                    "result": {"success": False, "error": str(e)}
-                }))
-
-        thread = threading.Thread(target=run_push, daemon=True)
+        thread = threading.Thread(target=run_all, daemon=True)
         thread.start()
 
         # Return immediately - results will come via signals
@@ -409,16 +468,24 @@ class Bridge(QObject):
                 config['push_password'] = '***' if config.get('push_password') else None
                 # Device config - check if configured
                 config['device_configured'] = bool(config.get('device_ip'))
-                # Push login state - include token existence and user info
+                # Push login state - include token existence and user info (Config 1)
                 config['push_token_exists'] = bool(config.get('push_token'))
                 config['push_token'] = '***' if config.get('push_token') else None
-                # Format datetime for display
-                if config.get('push_token_created_at'):
-                    try:
-                        dt = datetime.fromisoformat(str(config['push_token_created_at']))
-                        config['push_token_created_at'] = dt.strftime('%Y-%m-%d %H:%M:%S')
-                    except:
-                        pass
+
+                # Second push destination (Config 2)
+                config['push_password_2'] = '***' if config.get('push_password_2') else None
+                config['push_token_2_exists'] = bool(config.get('push_token_2'))
+                config['push_token_2'] = '***' if config.get('push_token_2') else None
+                config['push_enabled_2'] = bool(config.get('push_enabled_2'))
+
+                # Format datetimes for display
+                for field in ('push_token_created_at', 'push_token_created_at_2'):
+                    if config.get(field):
+                        try:
+                            dt = datetime.fromisoformat(str(config[field]))
+                            config[field] = dt.strftime('%Y-%m-%d %H:%M:%S')
+                        except:
+                            pass
             return json.dumps({"success": True, "data": config})
         except Exception as e:
             logger.error(f"Error getting API config: {e}")
@@ -430,19 +497,22 @@ class Bridge(QObject):
         try:
             config = json.loads(config_json)
 
-            # Only update provided fields
+            # Only update provided fields. Note: push_enabled_2 is intentionally NOT
+            # here — it is toggled via setPushConfig2Enabled so the history-baseline
+            # decision can be handled explicitly.
             update_fields = {}
             allowed_fields = [
                 'device_ip', 'device_port',
                 'push_url', 'push_auth_type', 'push_credentials',
                 'push_username', 'push_password',
+                'push_url_2', 'push_username_2', 'push_password_2',
                 'pull_interval_minutes', 'push_interval_minutes'
             ]
 
             for field in allowed_fields:
                 if field in config:
                     # Skip if credentials/passwords are masked or empty (don't overwrite existing)
-                    if field.endswith('_credentials') or field.endswith('_password'):
+                    if 'credentials' in field or 'password' in field:
                         if config[field] == '***' or config[field] == '' or config[field] is None:
                             continue
                     update_fields[field] = config[field]
@@ -461,12 +531,14 @@ class Bridge(QObject):
 
     @pyqtSlot(str, result=str)
     def testConnection(self, connection_type):
-        """Test connection (device or push)"""
+        """Test connection (device, push/push1, or push2)"""
         try:
             if connection_type == 'device':
                 success, message = self.pull_service.test_connection()
-            elif connection_type == 'push':
+            elif connection_type in ('push', 'push1'):
                 success, message = self.push_service.test_connection()
+            elif connection_type == 'push2':
+                success, message = self._push_service_for_slot(2).test_connection()
             else:
                 return json.dumps({"success": False, "error": "Invalid connection type"})
 
@@ -488,20 +560,32 @@ class Bridge(QObject):
             logger.error(f"Error getting device users: {e}")
             return json.dumps({"success": False, "error": str(e)})
 
-    @pyqtSlot(str, str, result=str)
-    def loginPush(self, username, password):
-        """Login to YAHSHUA Payroll and store token"""
+    @pyqtSlot(str, str, int, result=str)
+    def loginPush(self, username, password, slot=1):
+        """Login to a YAHSHUA Payroll destination and store its token.
+
+        Args:
+            username: Payroll username/email.
+            password: Payroll password.
+            slot: Push destination (1 = primary, 2 = secondary).
+        """
         try:
-            logger.info(f"Attempting YAHSHUA login for {username}")
+            slot = int(slot) if slot else 1
+            logger.info(f"Attempting YAHSHUA login (slot {slot}) for {username}")
 
-            # Save credentials first
-            self.database.update_api_config(push_username=username, push_password=password)
+            # Save credentials first to the slot's columns
+            suffix = '_2' if slot == 2 else ''
+            self.database.update_api_config(**{
+                f'push_username{suffix}': username,
+                f'push_password{suffix}': password,
+            })
 
-            # Authenticate
-            auth_result = self.push_service.authenticate(username, password)
+            # Authenticate using the slot's service
+            service = self._push_service_for_slot(slot)
+            auth_result = service.authenticate(username, password)
 
             # Log the login
-            self.database.log_config_change("YAHSHUA login successful")
+            self.database.log_config_change(f"YAHSHUA login successful (destination {slot})")
 
             return json.dumps({
                 "success": True,
@@ -513,19 +597,57 @@ class Bridge(QObject):
             logger.error(f"Error logging in to YAHSHUA: {e}")
             return json.dumps({"success": False, "error": str(e)})
 
-    @pyqtSlot(result=str)
-    def logoutPush(self):
-        """Logout from YAHSHUA Payroll (clear token)"""
+    @pyqtSlot(int, result=str)
+    def logoutPush(self, slot=1):
+        """Logout from a YAHSHUA Payroll destination (clear its token)"""
         try:
-            logger.info("Logging out from YAHSHUA")
-            self.database.update_push_token(None)
+            slot = int(slot) if slot else 1
+            logger.info(f"Logging out from YAHSHUA (slot {slot})")
+            self.database.update_push_token(None, slot=slot)
 
             # Log the logout
-            self.database.log_config_change("YAHSHUA logout")
+            self.database.log_config_change(f"YAHSHUA logout (destination {slot})")
 
             return json.dumps({"success": True, "message": "Logged out successfully"})
         except Exception as e:
             logger.error(f"Error logging out from YAHSHUA: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
+    @pyqtSlot(bool, bool, result=str)
+    def setPushConfig2Enabled(self, enabled, push_history=False):
+        """Enable or disable the second push destination.
+
+        When enabling, by default existing (historical) records are baselined as
+        already-synced to Config 2 so they are not retroactively flooded to the new
+        destination. Pass push_history=True to instead push the full backlog.
+
+        Args:
+            enabled: True to enable the second destination, False to disable.
+            push_history: When enabling, True to also push existing records.
+        """
+        try:
+            baselined = 0
+            if enabled and not push_history:
+                baselined = self.database.baseline_slot_as_synced(2)
+
+            self.database.update_api_config(push_enabled_2=1 if enabled else 0)
+            self.database.log_config_change(
+                f"Second push destination {'enabled' if enabled else 'disabled'}"
+            )
+            return json.dumps({
+                "success": True,
+                "enabled": bool(enabled),
+                "baselined": baselined,
+                "message": (
+                    f"Second destination enabled ({baselined} existing records skipped)"
+                    if enabled and not push_history else
+                    "Second destination enabled (existing records will be pushed)"
+                    if enabled else
+                    "Second destination disabled"
+                )
+            })
+        except Exception as e:
+            logger.error(f"Error toggling second push destination: {e}")
             return json.dumps({"success": False, "error": str(e)})
 
     # ==================== DEVICE MANAGEMENT METHODS ====================

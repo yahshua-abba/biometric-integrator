@@ -18,12 +18,23 @@ CLEANUP_DAYS = 60
 class SyncScheduler:
     """Scheduler for automated sync operations"""
 
-    def __init__(self, pull_service, push_service, database):
+    def __init__(self, pull_service, push_service, database, push_service_2=None):
         self.pull_service = pull_service
         self.push_service = push_service
+        self.push_service_2 = push_service_2
         self.database = database
         self.running = False
         self.thread = None
+
+    def _active_push_services(self):
+        """Primary push service always; secondary only when enabled and configured."""
+        services = [self.push_service]
+        config = self.database.get_api_config() or {}
+        if (self.push_service_2 is not None
+                and config.get('push_enabled_2')
+                and self.push_service_2.is_configured()):
+            services.append(self.push_service_2)
+        return services
 
     def start(self):
         """Start the scheduler"""
@@ -106,16 +117,27 @@ class SyncScheduler:
             logger.error(f"Scheduled pull sync error: {e}", exc_info=True)
 
     def run_push_sync(self):
-        """Execute push sync"""
-        logger.info("Scheduled push sync starting")
-        try:
-            success, message, stats = self.push_service.push_data()
-            if success:
-                logger.info(f"Scheduled push sync completed: {message}")
-            else:
-                logger.error(f"Scheduled push sync failed: {message}")
-        except Exception as e:
-            logger.error(f"Scheduled push sync error: {e}", exc_info=True)
+        """Execute push sync to every active destination (in parallel)."""
+        services = self._active_push_services()
+        logger.info(f"Scheduled push sync starting -> {[s.label for s in services]}")
+
+        def run_one(svc):
+            try:
+                success, message, stats = svc.push_data()
+                if success:
+                    logger.info(f"Scheduled push sync completed ({svc.label}): {message}")
+                else:
+                    logger.error(f"Scheduled push sync failed ({svc.label}): {message}")
+            except Exception as e:
+                logger.error(f"Scheduled push sync error ({svc.label}): {e}", exc_info=True)
+
+        threads = []
+        for svc in services:
+            t = threading.Thread(target=run_one, args=(svc,), daemon=True)
+            t.start()
+            threads.append(t)
+        for t in threads:
+            t.join()
 
     def trigger_pull_now(self):
         """Manually trigger pull sync immediately"""

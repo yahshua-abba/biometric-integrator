@@ -186,12 +186,16 @@ class BridgeService {
     return this.call('testConnection', connectionType)
   }
 
-  async loginPush(username, password) {
-    return this.call('loginPush', username, password)
+  async loginPush(username, password, slot = 1) {
+    return this.call('loginPush', username, password, slot)
   }
 
-  async logoutPush() {
-    return this.call('logoutPush')
+  async logoutPush(slot = 1) {
+    return this.call('logoutPush', slot)
+  }
+
+  async setPushConfig2Enabled(enabled, pushHistory = false) {
+    return this.call('setPushConfig2Enabled', enabled, pushHistory)
   }
 
   // ==================== DEVICE MANAGEMENT METHODS ====================

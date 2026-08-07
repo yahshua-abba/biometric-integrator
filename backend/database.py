@@ -16,6 +16,24 @@ logger = logging.getLogger(__name__)
 # Determine if running as frozen executable
 IS_FROZEN = getattr(sys, 'frozen', False)
 
+
+def _slot_cols(slot):
+    """Return (backend_id, synced_at, error) timesheet column names for a push slot.
+
+    Slot 1 is the primary/original destination; slot 2 is the optional second
+    push config. Column names are internal constants (never user input).
+    """
+    if int(slot) == 2:
+        return 'backend_timesheet_id_2', 'synced_at_2', 'sync_error_message_2'
+    return 'backend_timesheet_id', 'synced_at', 'sync_error_message'
+
+
+def _token_cols(slot):
+    """Return (token, token_created_at, user_logged) api_config column names for a slot."""
+    if int(slot) == 2:
+        return 'push_token_2', 'push_token_created_at_2', 'push_user_logged_2'
+    return 'push_token', 'push_token_created_at', 'push_user_logged'
+
 def get_app_data_dir():
     """Get persistent app data directory based on platform"""
     if IS_FROZEN:
@@ -217,6 +235,23 @@ class Database:
             except:
                 pass
 
+            # Second push destination (Config 2) - optional, enabled via push_enabled_2.
+            # Mirrors the primary push_* columns so a copy of every log can be sent
+            # to a second payroll system simultaneously.
+            for stmt in (
+                "ALTER TABLE api_config ADD COLUMN push_url_2 TEXT",
+                "ALTER TABLE api_config ADD COLUMN push_username_2 TEXT",
+                "ALTER TABLE api_config ADD COLUMN push_password_2 TEXT",
+                "ALTER TABLE api_config ADD COLUMN push_token_2 TEXT",
+                "ALTER TABLE api_config ADD COLUMN push_token_created_at_2 DATETIME",
+                "ALTER TABLE api_config ADD COLUMN push_user_logged_2 TEXT",
+                "ALTER TABLE api_config ADD COLUMN push_enabled_2 BOOLEAN DEFAULT 0",
+            ):
+                try:
+                    cursor.execute(stmt)
+                except:
+                    pass
+
             # Migration: Update sync_logs table to allow 'other' sync_type
             # Check if we need to migrate by trying to insert and rollback
             try:
@@ -301,6 +336,23 @@ class Database:
             except:
                 pass  # Column already exists
 
+            # Per-destination sync status for the second push config (Config 2).
+            # Independent of the primary columns so a record can be synced to
+            # Config 1 while still pending/failed for Config 2 (and vice versa).
+            try:
+                cursor.execute("ALTER TABLE timesheet ADD COLUMN backend_timesheet_id_2 INTEGER")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_timesheet_backend_id_2 ON timesheet(backend_timesheet_id_2)")
+            except:
+                pass  # Column already exists
+            try:
+                cursor.execute("ALTER TABLE timesheet ADD COLUMN synced_at_2 DATETIME")
+            except:
+                pass  # Column already exists
+            try:
+                cursor.execute("ALTER TABLE timesheet ADD COLUMN sync_error_message_2 TEXT")
+            except:
+                pass  # Column already exists
+
             # Create indexes for deleted_at (after column exists)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_device_deleted_at ON device(deleted_at)")
             cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_device_unique_ip_active ON device(ip) WHERE deleted_at IS NULL")
@@ -355,18 +407,19 @@ class Database:
         finally:
             conn.close()
 
-    def get_unsynced_timesheets(self, limit=100):
-        """Get timesheet entries that need to be pushed to backend"""
+    def get_unsynced_timesheets(self, limit=100, slot=1):
+        """Get timesheet entries that still need to be pushed to the given slot's destination"""
+        backend_col, _, _ = _slot_cols(slot)
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT t.*, e.backend_id as employee_backend_id, e.name as employee_name,
                        e.employee_code as employee_code, d.branch_id as branch_id
                 FROM timesheet t
                 JOIN employee e ON t.employee_id = e.id
                 LEFT JOIN device d ON t.device_id = d.id
-                WHERE t.backend_timesheet_id IS NULL
+                WHERE t.{backend_col} IS NULL
                 AND t.status = 'success'
                 AND COALESCE(t.excluded_from_sync, 0) = 0
                 AND t.deleted_at IS NULL
@@ -377,10 +430,11 @@ class Database:
         finally:
             conn.close()
 
-    def get_unsynced_timesheets_by_ids(self, ids):
-        """Get unsynced timesheet entries matching the given list of IDs"""
+    def get_unsynced_timesheets_by_ids(self, ids, slot=1):
+        """Get timesheet entries in the given ID list still unsynced for the given slot"""
         if not ids:
             return []
+        backend_col, _, _ = _slot_cols(slot)
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -391,7 +445,7 @@ class Database:
                 FROM timesheet t
                 JOIN employee e ON t.employee_id = e.id
                 LEFT JOIN device d ON t.device_id = d.id
-                WHERE t.backend_timesheet_id IS NULL
+                WHERE t.{backend_col} IS NULL
                 AND t.status = 'success'
                 AND COALESCE(t.excluded_from_sync, 0) = 0
                 AND t.deleted_at IS NULL
@@ -402,16 +456,17 @@ class Database:
         finally:
             conn.close()
 
-    def mark_timesheet_synced(self, timesheet_id, backend_timesheet_id):
-        """Mark a timesheet entry as successfully synced"""
+    def mark_timesheet_synced(self, timesheet_id, backend_timesheet_id, slot=1):
+        """Mark a timesheet entry as successfully synced to the given slot's destination"""
+        backend_col, synced_col, error_col = _slot_cols(slot)
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("""
+            cursor.execute(f"""
                 UPDATE timesheet
-                SET backend_timesheet_id = ?,
-                    synced_at = ?,
-                    sync_error_message = NULL
+                SET {backend_col} = ?,
+                    {synced_col} = ?,
+                    {error_col} = NULL
                 WHERE id = ?
             """, (backend_timesheet_id, datetime.now(), timesheet_id))
             conn.commit()
@@ -422,14 +477,15 @@ class Database:
         finally:
             conn.close()
 
-    def mark_timesheet_sync_failed(self, timesheet_id, error_message):
-        """Mark a timesheet sync as failed"""
+    def mark_timesheet_sync_failed(self, timesheet_id, error_message, slot=1):
+        """Mark a timesheet sync as failed for the given slot's destination"""
+        _, _, error_col = _slot_cols(slot)
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("""
+            cursor.execute(f"""
                 UPDATE timesheet
-                SET sync_error_message = ?
+                SET {error_col} = ?
                 WHERE id = ?
             """, (error_message, timesheet_id))
             conn.commit()
@@ -440,21 +496,85 @@ class Database:
         finally:
             conn.close()
 
-    def get_timesheet_stats(self):
-        """Get statistics about timesheet entries"""
+    def baseline_slot_as_synced(self, slot):
+        """Mark all currently-unsynced records as already synced for the given slot.
+
+        Used when a second push destination is enabled later, so historical logs
+        are not retroactively flooded to it. Sets a sentinel backend id (-1) on
+        every not-yet-synced, non-deleted record for that slot. Returns rows updated.
+        """
+        backend_col, synced_col, error_col = _slot_cols(slot)
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("""
-                SELECT
-                    COUNT(*) as total,
-                    SUM(CASE WHEN backend_timesheet_id IS NOT NULL THEN 1 ELSE 0 END) as synced,
-                    SUM(CASE WHEN backend_timesheet_id IS NULL AND sync_error_message IS NULL AND COALESCE(excluded_from_sync, 0) = 0 THEN 1 ELSE 0 END) as pending,
-                    SUM(CASE WHEN sync_error_message IS NOT NULL AND COALESCE(excluded_from_sync, 0) = 0 THEN 1 ELSE 0 END) as errors,
-                    SUM(CASE WHEN COALESCE(excluded_from_sync, 0) = 1 AND backend_timesheet_id IS NULL THEN 1 ELSE 0 END) as excluded
-                FROM timesheet
-                WHERE deleted_at IS NULL
-            """)
+            cursor.execute(f"""
+                UPDATE timesheet
+                SET {backend_col} = -1,
+                    {synced_col} = ?,
+                    {error_col} = NULL
+                WHERE {backend_col} IS NULL
+                AND deleted_at IS NULL
+            """, (datetime.now(),))
+            conn.commit()
+            return cursor.rowcount
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Error baselining slot {slot}: {e}")
+            raise
+        finally:
+            conn.close()
+
+    def get_timesheet_stats(self):
+        """Get statistics about timesheet entries.
+
+        When the second push destination is enabled, a record only counts as
+        "synced" once it has been pushed to BOTH destinations; it is an error if
+        either destination failed, and pending if either is still awaiting push.
+        When Config 2 is disabled, behaviour is identical to the single-config app.
+        """
+        config = self.get_api_config() or {}
+        config2_enabled = bool(config.get('push_enabled_2')) and bool(config.get('push_username_2'))
+
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            if not config2_enabled:
+                cursor.execute("""
+                    SELECT
+                        COUNT(*) as total,
+                        SUM(CASE WHEN backend_timesheet_id IS NOT NULL THEN 1 ELSE 0 END) as synced,
+                        SUM(CASE WHEN backend_timesheet_id IS NULL AND sync_error_message IS NULL AND COALESCE(excluded_from_sync, 0) = 0 THEN 1 ELSE 0 END) as pending,
+                        SUM(CASE WHEN sync_error_message IS NOT NULL AND COALESCE(excluded_from_sync, 0) = 0 THEN 1 ELSE 0 END) as errors,
+                        SUM(CASE WHEN COALESCE(excluded_from_sync, 0) = 1 AND backend_timesheet_id IS NULL THEN 1 ELSE 0 END) as excluded
+                    FROM timesheet
+                    WHERE deleted_at IS NULL
+                """)
+            else:
+                # b1/b2 = backend ids, e1/e2 = error messages. A slot is:
+                #   synced  -> backend id IS NOT NULL
+                #   error   -> backend id IS NULL AND error message IS NOT NULL
+                #   pending -> both NULL
+                cursor.execute("""
+                    SELECT
+                        COUNT(*) as total,
+                        SUM(CASE WHEN backend_timesheet_id IS NOT NULL AND backend_timesheet_id_2 IS NOT NULL
+                                 THEN 1 ELSE 0 END) as synced,
+                        SUM(CASE WHEN COALESCE(excluded_from_sync, 0) = 0
+                                 AND NOT (backend_timesheet_id IS NOT NULL AND backend_timesheet_id_2 IS NOT NULL)
+                                 AND NOT ((backend_timesheet_id IS NULL AND sync_error_message IS NOT NULL)
+                                          OR (backend_timesheet_id_2 IS NULL AND sync_error_message_2 IS NOT NULL))
+                                 THEN 1 ELSE 0 END) as pending,
+                        SUM(CASE WHEN COALESCE(excluded_from_sync, 0) = 0
+                                 AND NOT (backend_timesheet_id IS NOT NULL AND backend_timesheet_id_2 IS NOT NULL)
+                                 AND ((backend_timesheet_id IS NULL AND sync_error_message IS NOT NULL)
+                                      OR (backend_timesheet_id_2 IS NULL AND sync_error_message_2 IS NOT NULL))
+                                 THEN 1 ELSE 0 END) as errors,
+                        SUM(CASE WHEN COALESCE(excluded_from_sync, 0) = 1
+                                 AND NOT (backend_timesheet_id IS NOT NULL AND backend_timesheet_id_2 IS NOT NULL)
+                                 THEN 1 ELSE 0 END) as excluded
+                    FROM timesheet
+                    WHERE deleted_at IS NULL
+                """)
             return dict(cursor.fetchone())
         finally:
             conn.close()
@@ -818,29 +938,30 @@ class Database:
         config = self.get_api_config()
         return config.get('device_port', 4370) if config else 4370
 
-    def update_push_token(self, token, user_logged=None):
-        """Update YAHSHUA push token and user info"""
+    def update_push_token(self, token, user_logged=None, slot=1):
+        """Update YAHSHUA push token and user info for the given slot"""
+        token_col, created_col, user_col = _token_cols(slot)
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
             if token is None:
                 # Logout - clear token and user info
-                cursor.execute("""
+                cursor.execute(f"""
                     UPDATE api_config
-                    SET push_token = NULL, push_token_created_at = NULL,
-                        push_user_logged = NULL, updated_at = ?
+                    SET {token_col} = NULL, {created_col} = NULL,
+                        {user_col} = NULL, updated_at = ?
                     WHERE id = 1
                 """, (datetime.now(),))
             else:
                 # Login - store token and user info
-                cursor.execute("""
+                cursor.execute(f"""
                     UPDATE api_config
-                    SET push_token = ?, push_token_created_at = ?,
-                        push_user_logged = ?, updated_at = ?
+                    SET {token_col} = ?, {created_col} = ?,
+                        {user_col} = ?, updated_at = ?
                     WHERE id = 1
                 """, (token, datetime.now(), user_logged, datetime.now()))
             conn.commit()
-            logger.info("Push token updated successfully")
+            logger.info(f"Push token (slot {slot}) updated successfully")
         except Exception as e:
             conn.rollback()
             logger.error(f"Error updating push token: {e}")
@@ -848,10 +969,11 @@ class Database:
         finally:
             conn.close()
 
-    def get_push_token(self):
-        """Get current YAHSHUA push token"""
+    def get_push_token(self, slot=1):
+        """Get current YAHSHUA push token for the given slot"""
+        token_col, _, _ = _token_cols(slot)
         config = self.get_api_config()
-        return config.get('push_token') if config else None
+        return config.get(token_col) if config else None
 
     # ==================== DEVICE METHODS ====================
 

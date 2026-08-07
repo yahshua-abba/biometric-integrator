@@ -12,39 +12,35 @@
         Syncing to YAHSHUA Payroll
       </h2>
 
-      <!-- Progress Info -->
-      <div class="mb-4">
-        <div class="text-lg font-medium text-gray-700 mb-2">
-          Processing batch {{ progress.batch_current }} / {{ progress.batch_total }}
-        </div>
+      <!-- Per-destination progress -->
+      <div class="space-y-5">
+        <div v-for="cfg in configList" :key="cfg.slot">
+          <!-- Destination label (shown only when more than one destination) -->
+          <div v-if="configList.length > 1" class="text-sm font-semibold text-gray-700 mb-1">
+            {{ cfg.label }}
+            <span v-if="cfg.completed" class="text-green-600 ml-1">✓ done</span>
+          </div>
 
-        <!-- Progress Bar -->
-        <div class="w-full bg-gray-200 rounded-full h-4 mb-2">
-          <div
-            class="bg-green-500 h-4 rounded-full transition-all duration-300"
-            :style="{ width: progressPercent + '%' }"
-          ></div>
-        </div>
+          <div class="text-sm font-medium text-gray-600 mb-1">
+            Processing batch {{ cfg.batch_current }} / {{ cfg.batch_total }}
+          </div>
 
-        <div class="text-sm text-gray-500 text-right">
-          {{ progressPercent }}%
-        </div>
-      </div>
+          <!-- Progress Bar -->
+          <div class="w-full bg-gray-200 rounded-full h-4 mb-1">
+            <div
+              class="bg-green-500 h-4 rounded-full transition-all duration-300"
+              :style="{ width: percent(cfg) + '%' }"
+            ></div>
+          </div>
 
-      <!-- Stats -->
-      <div class="flex items-center justify-center gap-6 text-sm">
-        <div class="flex items-center gap-1">
-          <svg class="w-4 h-4 text-green-500" fill="currentColor" viewBox="0 0 20 20">
-            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd" />
-          </svg>
-          <span class="text-green-600 font-medium">{{ progress.success.toLocaleString() }} synced</span>
-        </div>
-        <div class="text-gray-300">|</div>
-        <div class="flex items-center gap-1">
-          <svg class="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 20 20">
-            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
-          </svg>
-          <span class="text-red-600 font-medium">{{ progress.failed.toLocaleString() }} failed</span>
+          <div class="flex items-center justify-between text-sm">
+            <div class="flex items-center gap-3">
+              <span class="text-green-600 font-medium">{{ cfg.success.toLocaleString() }} synced</span>
+              <span class="text-gray-300">|</span>
+              <span class="text-red-600 font-medium">{{ cfg.failed.toLocaleString() }} failed</span>
+            </div>
+            <span class="text-gray-500">{{ percent(cfg) }}%</span>
+          </div>
         </div>
       </div>
 
@@ -67,20 +63,28 @@ const props = defineProps({
     type: Boolean,
     default: false
   },
-  progress: {
-    type: Object,
-    default: () => ({
-      batch_current: 0,
-      batch_total: 0,
-      batch_size: 0,
-      success: 0,
-      failed: 0
-    })
+  // Map/array of per-destination progress. Falls back to a single default row.
+  configs: {
+    type: Array,
+    default: () => []
   }
 })
 
-const progressPercent = computed(() => {
-  if (props.progress.batch_total === 0) return 0
-  return Math.round((props.progress.batch_current / props.progress.batch_total) * 100)
+const configList = computed(() => {
+  if (props.configs && props.configs.length > 0) return props.configs
+  return [{
+    slot: 1,
+    label: 'Payroll 1',
+    batch_current: 0,
+    batch_total: 0,
+    success: 0,
+    failed: 0,
+    completed: false
+  }]
 })
+
+const percent = (cfg) => {
+  if (!cfg.batch_total) return 0
+  return Math.round((cfg.batch_current / cfg.batch_total) * 100)
+}
 </script>

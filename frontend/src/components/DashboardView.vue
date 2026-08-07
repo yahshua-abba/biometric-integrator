@@ -3,7 +3,7 @@
     <h1 class="text-3xl font-bold text-gray-900">Dashboard</h1>
 
     <!-- Push Progress Modal -->
-    <SyncProgressModal :show="showProgressModal" :progress="pushProgress" />
+    <SyncProgressModal :show="showProgressModal" :configs="pushConfigs" />
 
     <!-- Pull Date Range Modal -->
     <div v-if="showPullDateModal" class="fixed inset-0 z-50 flex items-center justify-center">
@@ -219,7 +219,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import bridgeService from '../services/bridge'
 import { useToast } from '../composables/useToast'
 import SyncProgressModal from './SyncProgressModal.vue'
@@ -239,15 +239,12 @@ const pullLoading = ref(false)
 const pushLoading = ref(false)
 const loadingLogs = ref(false)
 
-// Push progress modal state
+// Push progress modal state — one entry per active destination (keyed by slot)
 const showProgressModal = ref(false)
-const pushProgress = ref({
-  batch_current: 0,
-  batch_total: 0,
-  batch_size: 0,
-  success: 0,
-  failed: 0
-})
+const pushProgressMap = ref({})
+const pushConfigs = computed(() =>
+  Object.values(pushProgressMap.value).sort((a, b) => a.slot - b.slot)
+)
 
 // Pull date picker modal state
 const showPullDateModal = ref(false)
@@ -345,14 +342,8 @@ const executePullSync = async () => {
 const handlePushSync = async () => {
   pushLoading.value = true
   showProgressModal.value = true
-  // Reset progress
-  pushProgress.value = {
-    batch_current: 0,
-    batch_total: 0,
-    batch_size: 0,
-    success: 0,
-    failed: 0
-  }
+  // Reset progress (per-destination rows are populated as progress arrives)
+  pushProgressMap.value = {}
   try {
     // This returns immediately - actual result comes via syncCompleted signal
     await bridgeService.startPushSync()
@@ -380,13 +371,19 @@ const handleProgressUpdate = (event) => {
       device_total: progress.device_total || 0
     }
   } else {
-    // Handle push progress
-    pushProgress.value = {
-      batch_current: progress.batch_current || 0,
-      batch_total: progress.batch_total || 0,
-      batch_size: progress.batch_size || 0,
-      success: progress.success || 0,
-      failed: progress.failed || 0
+    // Handle push progress — track each destination separately by slot
+    const slot = progress.slot || 1
+    pushProgressMap.value = {
+      ...pushProgressMap.value,
+      [slot]: {
+        slot,
+        label: progress.config_label || `Payroll ${slot}`,
+        batch_current: progress.batch_current || 0,
+        batch_total: progress.batch_total || 0,
+        success: progress.success || 0,
+        failed: progress.failed || 0,
+        completed: !!progress.completed
+      }
     }
   }
 }

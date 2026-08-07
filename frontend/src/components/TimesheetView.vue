@@ -131,7 +131,7 @@
       </div>
     </div>
 
-    <SyncProgressModal :show="showProgressModal" :progress="pushProgress" />
+    <SyncProgressModal :show="showProgressModal" :configs="pushConfigs" />
 
     <div class="flex items-center justify-between">
       <h1 class="text-3xl font-bold text-gray-900">Timesheet Records</h1>
@@ -331,34 +331,34 @@
               </td>
               <td class="px-6 py-4 whitespace-nowrap">
                 <span
-                  v-if="entry.deleted_at"
+                  v-if="combinedStatus(entry) === 'deleted'"
                   class="badge bg-red-100 text-red-600"
-                  :title="`Deleted on ${formatDateTime(entry.deleted_at)}${entry.backend_timesheet_id ? ' · Was synced' : ' · Was not synced'}`"
+                  :title="`Deleted on ${formatDateTime(entry.deleted_at)}${isFullySynced(entry) ? ' · Was synced' : ' · Was not fully synced'}`"
                 >
                   Deleted
                 </span>
                 <span
-                  v-else-if="entry.backend_timesheet_id"
+                  v-else-if="combinedStatus(entry) === 'synced'"
                   class="badge badge-success"
-                  :title="`Backend ID: ${entry.backend_timesheet_id}`"
+                  :title="statusTitle(entry)"
                 >
                   Synced
                 </span>
                 <span
-                  v-else-if="entry.excluded_from_sync"
+                  v-else-if="combinedStatus(entry) === 'excluded'"
                   class="badge bg-gray-200 text-gray-700"
                   title="Marked as do-not-sync"
                 >
                   Do Not Sync
                 </span>
                 <span
-                  v-else-if="entry.sync_error_message"
+                  v-else-if="combinedStatus(entry) === 'error'"
                   class="badge badge-error"
-                  :title="entry.sync_error_message"
+                  :title="statusTitle(entry)"
                 >
-                  Error
+                  {{ config2Active ? 'Partial / Error' : 'Error' }}
                 </span>
-                <span v-else class="badge badge-warning">
+                <span v-else class="badge badge-warning" :title="statusTitle(entry)">
                   Pending
                 </span>
               </td>
@@ -366,14 +366,20 @@
                 {{ entry.sync_id }}
               </td>
               <td v-if="filterStatus === 'error'" class="px-6 py-4 text-sm text-red-600 max-w-md">
-                <div class="truncate" :title="entry.sync_error_message">
-                  {{ entry.sync_error_message }}
+                <div
+                  v-for="line in errorLines(entry)"
+                  :key="line.slot"
+                  class="truncate"
+                  :title="line.label ? `${line.label}: ${line.msg}` : line.msg"
+                >
+                  <span v-if="line.label" class="font-semibold">{{ line.label }}:</span>
+                  {{ line.msg }}
                 </div>
               </td>
               <td class="px-6 py-4 whitespace-nowrap text-sm">
                 <div v-if="!entry.deleted_at" class="flex items-center gap-3">
                   <button
-                    v-if="entry.sync_error_message && !entry.excluded_from_sync"
+                    v-if="combinedStatus(entry) === 'error'"
                     @click="retrySync(entry.id)"
                     class="text-primary-600 hover:text-primary-900"
                     title="Retry sync"
@@ -383,7 +389,7 @@
                     </svg>
                   </button>
                   <button
-                    v-if="!entry.backend_timesheet_id"
+                    v-if="!isFullySynced(entry)"
                     @click="toggleExcluded(entry)"
                     class="text-gray-500 hover:text-gray-800"
                     :title="entry.excluded_from_sync ? 'Restore — allow syncing' : 'Mark as do-not-sync'"
@@ -470,17 +476,77 @@ const pageSize = 50
 const selectedIds = ref([])
 const pushLoading = ref(false)
 const showProgressModal = ref(false)
-const pushProgress = ref({
-  batch_current: 0,
-  batch_total: 0,
-  batch_size: 0,
-  success: 0,
-  failed: 0
-})
+const pushProgressMap = ref({})
+const pushConfigs = computed(() =>
+  Object.values(pushProgressMap.value).sort((a, b) => a.slot - b.slot)
+)
 
-// A row is selectable if it has not yet been successfully synced.
+// Whether the optional second push destination is active (loaded from config).
+const config2Active = ref(false)
+
+// Per-destination status. Slot 1 uses the original columns; slot 2 the _2 columns.
+const slotSynced = (entry, slot) => {
+  const b = slot === 2 ? entry.backend_timesheet_id_2 : entry.backend_timesheet_id
+  return b !== null && b !== undefined
+}
+const slotError = (entry, slot) => {
+  if (slotSynced(entry, slot)) return false
+  return !!(slot === 2 ? entry.sync_error_message_2 : entry.sync_error_message)
+}
+
+const activeSlots = computed(() => (config2Active.value ? [1, 2] : [1]))
+
+// Synced only when delivered to every active destination.
+const isFullySynced = (entry) => activeSlots.value.every(s => slotSynced(entry, s))
+const hasAnyError = (entry) => activeSlots.value.some(s => slotError(entry, s))
+
+// One combined status label for the badge column.
+const combinedStatus = (entry) => {
+  if (entry.deleted_at) return 'deleted'
+  if (isFullySynced(entry)) return 'synced'
+  if (entry.excluded_from_sync) return 'excluded'
+  if (hasAnyError(entry)) return 'error'
+  return 'pending'
+}
+
+// Human-readable name for each push destination (matches the Configuration page).
+const slotLabel = (slot) => (slot === 2 ? 'Payroll 2 (Secondary)' : 'Payroll 1 (Primary)')
+
+const slotErrorMessage = (entry, slot) =>
+  slot === 2 ? entry.sync_error_message_2 : entry.sync_error_message
+
+// Labelled error lines for a record — one per destination that failed.
+// When only one destination is active, the label is omitted (single-config view).
+const errorLines = (entry) => {
+  const lines = []
+  for (const slot of activeSlots.value) {
+    if (slotError(entry, slot)) {
+      lines.push({
+        slot,
+        label: config2Active.value ? slotLabel(slot) : '',
+        msg: slotErrorMessage(entry, slot) || 'Sync failed'
+      })
+    }
+  }
+  return lines
+}
+
+// Tooltip describing each destination when the second one is active.
+const statusTitle = (entry) => {
+  if (!config2Active.value) {
+    return entry.backend_timesheet_id ? `Backend ID: ${entry.backend_timesheet_id}` : (entry.sync_error_message || '')
+  }
+  const describe = (slot) => {
+    if (slotSynced(entry, slot)) return 'synced'
+    if (slotError(entry, slot)) return `error — ${slotErrorMessage(entry, slot)}`
+    return 'pending'
+  }
+  return `${slotLabel(1)}: ${describe(1)}\n${slotLabel(2)}: ${describe(2)}`
+}
+
+// A row is selectable if it has not yet been fully synced (to all active destinations).
 // (Excluded rows are still selectable so the user can unmark them in bulk.)
-const isSelectable = (entry) => !entry.backend_timesheet_id
+const isSelectable = (entry) => !isFullySynced(entry)
 
 const selectableIdsOnPage = computed(() =>
   paginatedTimesheets.value.filter(isSelectable).map(e => e.id)
@@ -652,13 +718,13 @@ const filteredTimesheets = computed(() => {
   // Filter by status
   // 'deleted' records are pre-filtered by the backend endpoint — no extra filter needed
   if (filterStatus.value === 'synced') {
-    filtered = filtered.filter(t => t.backend_timesheet_id !== null)
+    filtered = filtered.filter(t => combinedStatus(t) === 'synced')
   } else if (filterStatus.value === 'pending') {
-    filtered = filtered.filter(t => t.backend_timesheet_id === null && !t.sync_error_message && !t.excluded_from_sync)
+    filtered = filtered.filter(t => combinedStatus(t) === 'pending')
   } else if (filterStatus.value === 'error') {
-    filtered = filtered.filter(t => t.sync_error_message !== null && !t.excluded_from_sync)
+    filtered = filtered.filter(t => combinedStatus(t) === 'error')
   } else if (filterStatus.value === 'excluded') {
-    filtered = filtered.filter(t => !!t.excluded_from_sync && !t.backend_timesheet_id)
+    filtered = filtered.filter(t => combinedStatus(t) === 'excluded')
   }
 
   // Filter by search query
@@ -722,7 +788,7 @@ const syncSelected = async () => {
   const byId = new Map(timesheets.value.map(t => [t.id, t]))
   const syncableIds = selectedIds.value.filter(id => {
     const t = byId.get(id)
-    return t && !t.excluded_from_sync && !t.backend_timesheet_id
+    return t && !t.excluded_from_sync && !isFullySynced(t)
   })
   if (syncableIds.length === 0) {
     error('All selected records are marked do-not-sync or already synced.')
@@ -734,13 +800,7 @@ const syncSelected = async () => {
 
   pushLoading.value = true
   showProgressModal.value = true
-  pushProgress.value = {
-    batch_current: 0,
-    batch_total: 0,
-    batch_size: 0,
-    success: 0,
-    failed: 0
-  }
+  pushProgressMap.value = {}
   try {
     await bridgeService.startPushSyncForIds(syncableIds)
   } catch (err) {
@@ -753,12 +813,18 @@ const syncSelected = async () => {
 const handlePushProgress = (event) => {
   const progress = event.detail
   if (progress.type === 'pull') return
-  pushProgress.value = {
-    batch_current: progress.batch_current || 0,
-    batch_total: progress.batch_total || 0,
-    batch_size: progress.batch_size || 0,
-    success: progress.success || 0,
-    failed: progress.failed || 0
+  const slot = progress.slot || 1
+  pushProgressMap.value = {
+    ...pushProgressMap.value,
+    [slot]: {
+      slot,
+      label: progress.config_label || `Payroll ${slot}`,
+      batch_current: progress.batch_current || 0,
+      batch_total: progress.batch_total || 0,
+      success: progress.success || 0,
+      failed: progress.failed || 0,
+      completed: !!progress.completed
+    }
   }
 }
 
@@ -791,7 +857,7 @@ const bulkSetExcluded = async (excluded) => {
   const byId = new Map(timesheets.value.map(t => [t.id, t]))
   const eligible = selectedIds.value.filter(id => {
     const t = byId.get(id)
-    return t && !t.backend_timesheet_id
+    return t && !isFullySynced(t)
   })
   if (eligible.length === 0) {
     error('No eligible records selected (already-synced rows cannot be excluded).')
@@ -822,6 +888,15 @@ onMounted(async () => {
   initDateFilters()
 
   await bridgeService.whenReady()
+
+  // Determine whether the second push destination is active (affects status logic)
+  try {
+    const cfg = await bridgeService.getApiConfig()
+    config2Active.value = !!(cfg.data && cfg.data.push_enabled_2 && cfg.data.push_username_2)
+  } catch (e) {
+    config2Active.value = false
+  }
+
   await loadData()
 
   // Listen for sync completion to refresh data

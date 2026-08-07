@@ -323,15 +323,18 @@ class IntegrationApp:
                 QColor("#93c5fd"))
             self.app.processEvents()
 
-            # Initialize services
+            # Initialize services (two push slots: primary + optional second destination)
             self.pull_service = PullService(self.database)
-            self.push_service = PushService(self.database)
+            self.push_service = PushService(self.database, slot=1)
+            self.push_service_2 = PushService(self.database, slot=2)
 
             # Initialize bridge
-            self.bridge = Bridge(self.database, self.pull_service, self.push_service)
+            self.bridge = Bridge(self.database, self.pull_service, self.push_service,
+                                 push_service_2=self.push_service_2)
 
             # Initialize scheduler
-            self.scheduler = SyncScheduler(self.pull_service, self.push_service, self.database)
+            self.scheduler = SyncScheduler(self.pull_service, self.push_service, self.database,
+                                           push_service_2=self.push_service_2)
 
             # Connect scheduler to bridge
             self.bridge.set_scheduler(self.scheduler)
