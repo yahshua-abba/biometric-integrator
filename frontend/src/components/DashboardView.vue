@@ -222,9 +222,10 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import bridgeService from '../services/bridge'
 import { useToast } from '../composables/useToast'
+import { showPushResultToasts } from '../utils/pushResultToast'
 import SyncProgressModal from './SyncProgressModal.vue'
 
-const { success, error } = useToast()
+const { success, error, info } = useToast()
 
 const stats = ref({
   total: 0,
@@ -395,46 +396,43 @@ const formatDateTime = (dateTime) => {
 }
 
 // Listen for sync events
+const handleSyncCompleted = async (event) => {
+  const data = event.detail
+
+  // Handle pull completion
+  if (data.type === 'pull') {
+    pullLoading.value = false
+    showPullDateModal.value = false
+
+    if (data.result.success) {
+      success(data.result.message)
+    } else {
+      error(data.result.message || data.result.error || 'Pull sync failed')
+    }
+  }
+
+  // Handle push completion — separate green (synced) / red (failed) toasts
+  if (data.type === 'push') {
+    pushLoading.value = false
+    showProgressModal.value = false
+    showPushResultToasts(data.result, { success, error, info })
+  }
+
+  await loadData()
+}
+
 onMounted(async () => {
   await bridgeService.whenReady()
   await loadData()
 
-  // Listen for sync progress updates
+  // Named listeners so both can be removed on unmount — otherwise each
+  // navigation back to the dashboard would add another toast handler.
   window.addEventListener('syncProgressUpdated', handleProgressUpdate)
-
-  // Listen for sync completion
-  window.addEventListener('syncCompleted', async (event) => {
-    const data = event.detail
-
-    // Handle pull completion
-    if (data.type === 'pull') {
-      pullLoading.value = false
-      showPullDateModal.value = false
-
-      if (data.result.success) {
-        success(data.result.message)
-      } else {
-        error(data.result.message || data.result.error || 'Pull sync failed')
-      }
-    }
-
-    // Handle push completion
-    if (data.type === 'push') {
-      pushLoading.value = false
-      showProgressModal.value = false
-
-      if (data.result.success) {
-        success(data.result.message)
-      } else {
-        error(data.result.message || data.result.error || 'Push sync failed')
-      }
-    }
-
-    await loadData()
-  })
+  window.addEventListener('syncCompleted', handleSyncCompleted)
 })
 
 onUnmounted(() => {
   window.removeEventListener('syncProgressUpdated', handleProgressUpdate)
+  window.removeEventListener('syncCompleted', handleSyncCompleted)
 })
 </script>

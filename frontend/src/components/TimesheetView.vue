@@ -454,12 +454,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import bridgeService from '../services/bridge'
 import { useToast } from '../composables/useToast'
+import { showPushResultToasts } from '../utils/pushResultToast'
 import SyncProgressModal from './SyncProgressModal.vue'
 
-const { success, error } = useToast()
+const { success, error, info } = useToast()
 
 const timesheets = ref([])
 const devices = ref([])
@@ -828,17 +829,16 @@ const handlePushProgress = (event) => {
   }
 }
 
-const handlePushCompleted = (event) => {
+const handleSyncCompleted = (event) => {
   const data = event.detail
-  if (data.type !== 'push') return
-  pushLoading.value = false
-  showProgressModal.value = false
-  selectedIds.value = []
-  if (data.result.success) {
-    success(data.result.message)
-  } else {
-    error(data.result.message || data.result.error || 'Sync failed')
+  // Only push results drive this view's toast/modal; pull just refreshes the table.
+  if (data.type === 'push') {
+    pushLoading.value = false
+    showProgressModal.value = false
+    selectedIds.value = []
+    showPushResultToasts(data.result, { success, error, info })
   }
+  loadData()
 }
 
 const toggleExcluded = async (entry) => {
@@ -899,13 +899,14 @@ onMounted(async () => {
 
   await loadData()
 
-  // Listen for sync completion to refresh data
-  window.addEventListener('syncCompleted', async () => {
-    await loadData()
-  })
-
-  // Listen for push progress + completion to drive the modal
+  // Single, named listeners so they can be removed on unmount (prevents
+  // duplicate handlers — and duplicate toasts — accumulating across navigations).
   window.addEventListener('syncProgressUpdated', handlePushProgress)
-  window.addEventListener('syncCompleted', handlePushCompleted)
+  window.addEventListener('syncCompleted', handleSyncCompleted)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('syncProgressUpdated', handlePushProgress)
+  window.removeEventListener('syncCompleted', handleSyncCompleted)
 })
 </script>

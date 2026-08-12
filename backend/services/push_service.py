@@ -233,7 +233,9 @@ class PushService:
             'failed': 0,
             'skipped': 0,
             'batches_completed': 0,
-            'batches_total': 0
+            'batches_total': 0,
+            # Distinct failure reasons -> count, so the UI can show WHY records failed
+            'reasons': {}
         }
 
         try:
@@ -345,6 +347,7 @@ class PushService:
                         friendly_msg = get_friendly_yahshua_error(error_code, reason)
                         self.database.mark_timesheet_sync_failed(local_id, friendly_msg, slot=self.slot)
                         stats['failed'] += 1
+                        stats['reasons'][friendly_msg] = stats['reasons'].get(friendly_msg, 0) + 1
                         logger.warning(f"Timesheet {local_id} failed (code {error_code}): {reason} -> {friendly_msg}")
 
                     stats['batches_completed'] += 1
@@ -363,6 +366,7 @@ class PushService:
                             slot=self.slot
                         )
                         stats['failed'] += 1
+                    stats['reasons'][batch_error] = stats['reasons'].get(batch_error, 0) + len(batch)
 
                     break  # Stop processing remaining batches
 
