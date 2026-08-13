@@ -199,6 +199,24 @@ class TestPushBatch:
         assert success is True
         assert 1 in result['logs_successfully_sync']
 
+    def test_push_batch_duplicate_only_400_preserves_record_results(self, mocker):
+        """A 400 containing only duplicate rows must still be processed per record."""
+        svc = make_service()
+        duplicate = {
+            'id': 7,
+            'reason': 'Duplicate record already exists',
+            'error_code': 120,
+        }
+        mocker.patch.object(svc.session, 'post', return_value=mock_response(400, {
+            'logs_successfully_sync': [],
+            'logs_not_sync': [duplicate],
+        }))
+
+        success, result = svc.push_batch('token', [{'id': 7}])
+
+        assert success is True
+        assert result['logs_not_sync'] == [duplicate]
+
 
 # ---------------------------------------------------------------------------
 # push_data()
@@ -280,3 +298,103 @@ class TestPushData:
         db.mark_timesheet_sync_failed.assert_called_once()
         failed_args = db.mark_timesheet_sync_failed.call_args[0]
         assert failed_args[0] == 2
+
+    @pytest.mark.parametrize(
+        ('error_code', 'reason'),
+        [
+            (1, 'Time in range (5mins)'),
+            ('1', 'Time in range (5mins)'),
+            (120, 'Duplicate record already exists'),
+            (None, 'Duplicate record already exists'),
+        ],
+    )
+    def test_already_recorded_punch_is_marked_synced_locally(
+        self, mocker, error_code, reason
+    ):
+        """Payroll duplicates must leave the local retry queue permanently."""
+        db = MagicMock()
+        db.get_push_token.return_value = 'valid-token'
+        db.get_unsynced_timesheets.return_value = [
+            {'id': 7, 'employee_code': 'E007', 'time': '10:08', 'log_type': 'in',
+             'sync_id': 'ZK_1_7_20260813100800', 'date': '2026-08-13', 'branch_id': None},
+        ]
+        db.create_sync_log.return_value = 1
+
+        svc = make_service(db)
+        mocker.patch.object(svc, 'push_batch', return_value=(True, {
+            'logs_successfully_sync': [],
+            'logs_not_sync': [
+                {'id': 7, 'reason': reason, 'error_code': error_code},
+            ],
+        }))
+
+        success, message, stats = svc.push_data()
+
+        assert success is True
+        assert stats['success'] == 0
+        assert stats['duplicates'] == 1
+        assert stats['failed'] == 0
+        assert '1 duplicates skipped' in message
+        db.mark_timesheet_synced.assert_called_once_with(7, 7)
+        db.mark_timesheet_sync_failed.assert_not_called()
+
+    def test_duplicate_only_400_is_marked_synced_and_not_left_retryable(self, mocker):
+        """Exercise HTTP handling and queue-state handling together."""
+        db = MagicMock()
+        db.get_push_token.return_value = 'valid-token'
+        db.get_unsynced_timesheets.return_value = [
+            {'id': 7, 'employee_code': 'E007', 'time': '10:08', 'log_type': 'in',
+             'sync_id': 'ZK_1_7_20260813100800', 'date': '2026-08-13', 'branch_id': None},
+        ]
+        db.create_sync_log.return_value = 1
+        svc = make_service(db)
+        mocker.patch.object(svc.session, 'post', return_value=mock_response(400, {
+            'logs_successfully_sync': [],
+            'logs_not_sync': [
+                {'id': 7, 'reason': 'Duplicate record already exists', 'error_code': 120},
+            ],
+        }))
+
+        success, message, stats = svc.push_data()
+
+        assert success is True
+        assert stats['success'] == 0
+        assert stats['failed'] == 0
+        assert stats['duplicates'] == 1
+        assert '1 duplicates skipped' in message
+        db.mark_timesheet_synced.assert_called_once_with(7, 7)
+        db.mark_timesheet_sync_failed.assert_not_called()
+
+    def test_mixed_duplicate_and_failure_reports_each_outcome(self, mocker):
+        """Duplicates stay synced while real rejections remain visible failures."""
+        db = MagicMock()
+        db.get_push_token.return_value = 'valid-token'
+        db.get_unsynced_timesheets.return_value = [
+            {'id': 7, 'employee_code': 'E007', 'time': '10:08', 'log_type': 'in',
+             'sync_id': 'ZK_1_7_20260813100800', 'date': '2026-08-13', 'branch_id': None},
+            {'id': 8, 'employee_code': 'E008', 'time': '10:09', 'log_type': 'in',
+             'sync_id': 'ZK_1_8_20260813100900', 'date': '2026-08-13', 'branch_id': None},
+        ]
+        db.create_sync_log.return_value = 1
+        svc = make_service(db)
+        mocker.patch.object(svc, 'push_batch', return_value=(True, {
+            'logs_successfully_sync': [],
+            'logs_not_sync': [
+                {'id': 7, 'reason': 'Duplicate record already exists', 'error_code': 120},
+                {'id': 8, 'reason': 'Employee not found', 'error_code': 140},
+            ],
+        }))
+
+        success, message, stats = svc.push_data()
+
+        assert success is True
+        assert stats['success'] == 0
+        assert stats['duplicates'] == 1
+        assert stats['failed'] == 1
+        assert message == (
+            'Push completed with errors: 0 synced, 1 failed, 1 duplicates skipped'
+        )
+        db.mark_timesheet_synced.assert_called_once_with(7, 7)
+        db.mark_timesheet_sync_failed.assert_called_once_with(
+            8, 'Employee not found in payroll system'
+        )
