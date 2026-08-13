@@ -264,14 +264,18 @@
             <p class="text-xs text-gray-500 mt-1">Leave as 0 if device has no password</p>
           </div>
           <div>
-            <label class="label">Branch ID</label>
+            <label class="label">Branch ID (Location)</label>
             <input
               v-model="deviceForm.branch_id"
               type="text"
-              placeholder="e.g., BRANCH001"
+              placeholder="e.g., MAIN"
               class="input"
             />
-            <p class="text-xs text-gray-500 mt-1">Branch identifier for Payroll system (optional)</p>
+            <p class="text-xs text-gray-500 mt-1">
+              Optional. Must match the employee's <strong>Location</strong> name in YAHSHUA Payroll
+              (Employee &rarr; Job Information &rarr; Location). Leave blank for a single-location company.
+              See Help &amp; FAQ &rarr; "What is the Branch ID for?" for details.
+            </p>
           </div>
           <div v-if="editingDevice" class="flex items-center gap-2">
             <input
