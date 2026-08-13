@@ -47,6 +47,31 @@ HTTP_ERROR_MESSAGES = {
 }
 
 
+# Duplicate / near-duplicate rejections: the employee's punch is ALREADY on the
+# payroll server (a twin punch synced seconds earlier), so this redundant record
+# can never sync and must not be retried — otherwise it floods the push queue
+# forever and starves real records. These are benign, not failures.
+# Code 1   = "Time in range (5mins)" (server already has a punch within 5 min)
+# Code 120 = "Duplicate record already exists"
+DUPLICATE_ERROR_CODES = {1, 120}
+
+
+def is_duplicate_error(error_code, reason):
+    """Return whether payroll says this punch is already recorded."""
+    try:
+        normalized_code = int(error_code)
+    except (TypeError, ValueError):
+        normalized_code = None
+
+    normalized_reason = (reason or '').lower()
+    return (
+        normalized_code in DUPLICATE_ERROR_CODES
+        or 'time in range' in normalized_reason
+        or 'duplicate record' in normalized_reason
+        or 'already exists' in normalized_reason
+    )
+
+
 def get_friendly_yahshua_error(error_code, reason):
     """Get a user-friendly error message for a YAHSHUA error code"""
     friendly = YAHSHUA_ERROR_MESSAGES.get(error_code)
@@ -212,6 +237,7 @@ class PushService:
             'processed': 0,
             'success': 0,
             'failed': 0,
+            'duplicates': 0,
             'skipped': 0,
             'batches_completed': 0,
             'batches_total': 0
@@ -310,6 +336,8 @@ class PushService:
                     # Process results for this batch
                     logs_synced = result.get('logs_successfully_sync', [])
                     logs_failed = result.get('logs_not_sync', [])
+                    batch_failed = 0
+                    batch_duplicates = 0
 
                     # Mark successful logs
                     for local_id in logs_synced:
@@ -323,13 +351,26 @@ class PushService:
                         reason = failed_log.get('reason', 'Unknown error')
                         error_code = failed_log.get('error_code', 0)
 
+                        is_duplicate = is_duplicate_error(error_code, reason)
                         friendly_msg = get_friendly_yahshua_error(error_code, reason)
-                        self.database.mark_timesheet_sync_failed(local_id, friendly_msg)
-                        stats['failed'] += 1
-                        logger.warning(f"Timesheet {local_id} failed (code {error_code}): {reason} -> {friendly_msg}")
+                        if is_duplicate:
+                            # Payroll already has this punch. Treat that as synced
+                            # locally so the scheduler never submits it again.
+                            self.database.mark_timesheet_synced(local_id, local_id)
+                            stats['duplicates'] += 1
+                            batch_duplicates += 1
+                            logger.info(f"Timesheet {local_id} already exists in payroll (code {error_code}): {reason} — marked synced locally")
+                        else:
+                            self.database.mark_timesheet_sync_failed(local_id, friendly_msg)
+                            stats['failed'] += 1
+                            batch_failed += 1
+                            logger.warning(f"Timesheet {local_id} failed (code {error_code}): {reason} -> {friendly_msg}")
 
                     stats['batches_completed'] += 1
-                    logger.info(f"Batch {batch_num} completed: {len(logs_synced)} synced, {len(logs_failed)} failed")
+                    logger.info(
+                        f"Batch {batch_num} completed: {len(logs_synced)} synced, "
+                        f"{batch_failed} failed, {batch_duplicates} duplicates skipped"
+                    )
 
                 else:
                     # Batch-level failure (network error, timeout) - STOP immediately
@@ -372,13 +413,20 @@ class PushService:
 
             # Build message
             if batch_error:
-                message = f"Push failed: {batch_error}"
-                if stats['success'] > 0:
-                    message += f" ({stats['success']} synced before error, {stats['failed']} failed)"
+                message = (
+                    f"Push failed: {batch_error} ({stats['success']} synced before error, "
+                    f"{stats['failed']} failed, {stats['duplicates']} duplicates skipped)"
+                )
             elif stats['failed'] > 0:
-                message = f"Push completed with errors: {stats['success']} synced, {stats['failed']} failed"
+                message = (
+                    f"Push completed with errors: {stats['success']} synced, "
+                    f"{stats['failed']} failed, {stats['duplicates']} duplicates skipped"
+                )
             else:
-                message = f"Push completed: {stats['success']} records synced successfully"
+                message = (
+                    f"Push completed: {stats['success']} records synced successfully "
+                    f"({stats['duplicates']} duplicates skipped)"
+                )
 
             logger.info(message)
             return batch_error is None, message, stats
@@ -437,8 +485,10 @@ class PushService:
                 return True, data
 
             elif response.status_code == 400:
-                # Bad request - check for partial success
-                if data.get('logs_successfully_sync'):
+                # The API uses HTTP 400 for per-record rejections, including
+                # duplicate-only batches. Preserve those results so each row
+                # can be classified and removed from the retry queue.
+                if data.get('logs_successfully_sync') or data.get('logs_not_sync'):
                     return True, data
                 return False, {'error': data.get('message', 'Bad request')}
 
