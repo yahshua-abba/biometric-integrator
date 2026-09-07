@@ -105,7 +105,7 @@ class Bridge(QObject):
 
     @pyqtSlot(int, result=str)
     def retryFailedTimesheet(self, timesheet_id):
-        return json.dumps({'success': False, 'error': 'Use Retry Queue to review and retry each Payroll destination.'})
+        return json.dumps({'success': False, 'error': 'Use Logs Needing Review to review and retry each Payroll destination.'})
 
     @pyqtSlot(str, result=str)
     def getRetryQueue(self, filters_json):

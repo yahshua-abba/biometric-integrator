@@ -152,7 +152,7 @@
             Pushing...
           </span>
         </button>
-        <p class="text-sm text-gray-500 mt-3">{{ stats.new_uploads || 0 }} new uploads ready. Failed or unconfirmed uploads require review in <button class="text-primary-700 underline" @click="openRetryQueue">Needs Attention</button>.</p>
+        <p class="text-sm text-gray-500 mt-3">{{ stats.new_uploads || 0 }} new uploads ready. Failed or unconfirmed uploads require review in <button class="text-primary-700 underline" @click="openRetryQueue">Logs Needing Review</button>.</p>
       </div>
     </div>
 
@@ -178,7 +178,7 @@
         <div class="text-3xl font-bold text-yellow-600">{{ stats.pending || 0 }}</div>
       </div>
       <div class="card">
-        <button class="text-sm text-primary-700 underline mb-1" @click="openRetryQueue">Needs attention →</button>
+        <button class="text-sm text-primary-700 underline mb-1" @click="openRetryQueue">Logs Needing Review →</button>
         <div class="text-3xl font-bold text-red-600">{{ stats.errors || 0 }}</div>
       </div>
     </div>

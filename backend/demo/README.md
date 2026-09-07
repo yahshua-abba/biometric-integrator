@@ -18,7 +18,7 @@ cd ..
 /tmp/biometric-demo-venv/bin/python backend/demo/server.py
 ```
 
-Open **http://127.0.0.1:8877/retry/** for the actual Vue Needs Attention component,
+Open **http://127.0.0.1:8877/retry/** for the actual Vue Logs Needing Review component,
 connected to the shipping Python push service. This is a separate demo bundle;
 its HTTP bridge adapter is never imported by the desktop application.
 Stop with Ctrl+C to discard the temporary databases. Use `--port 8878` if needed.
@@ -127,6 +127,6 @@ npm run build:demo
 The desktop sidebar has three attendance views:
 - **Overview** shows attendance totals. **Send New Uploads** sends only first attempts for each enabled Payroll destination and is disabled when none remain.
 - **Attendance Records** starts with all statuses in the date range. **Send New Selected** counts only selected records with a first upload remaining. An already attempted destination is never resent from this button, even if another destination is still new.
-- **Needs Attention** is the manual retry review. Opening review from an attendance row carries that employee and attendance date into the individual logs view; unconfirmed records open the Unconfirmed tab. Nothing is preselected or submitted by navigating here.
+- **Logs Needing Review** is the manual retry review. Opening review from an attendance row carries that employee and attendance date into the individual logs view; unconfirmed records open the Unconfirmed tab. Nothing is preselected or submitted by navigating here.
 
-Overview's totals count attendance records; the send button and Needs Attention count uploads to individual Payroll destinations. One attendance record may have two uploads.
+Overview's totals count attendance records; the send button and Logs Needing Review count uploads to individual Payroll destinations. One attendance record may have two uploads.

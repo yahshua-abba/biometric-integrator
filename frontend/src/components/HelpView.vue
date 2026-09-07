@@ -25,7 +25,7 @@
           <h3 class="font-semibold text-gray-800 mb-2">Synchronization Modes</h3>
           <ul class="space-y-2 text-gray-600">
             <li><strong>Pull Mode</strong> &mdash; The app automatically retrieves attendance data from the ZKTeco device at scheduled intervals. Use "Pull Data Now" for manual, immediate syncing.</li>
-            <li><strong>Push Mode</strong> &mdash; The system uploads retrieved attendance data to the Cloud Payroll system. Use "Send New Uploads" for first attempts. Review failed or unconfirmed uploads in Needs Attention before retrying.</li>
+            <li><strong>Push Mode</strong> &mdash; The system uploads retrieved attendance data to the Cloud Payroll system. Use "Send New Uploads" for first attempts. Review failed or unconfirmed uploads in Logs Needing Review before retrying.</li>
           </ul>
         </div>
       </div>
@@ -499,7 +499,7 @@ const troubleshootingItems = [
         <li>Check your <strong>internet connection</strong>.</li>
         <li>Verify your <strong>login credentials</strong> in the Configuration page.</li>
         <li>Make sure <strong>employee IDs match</strong> between the Payroll System and the ZKTeco Device.</li>
-        <li>Retry device downloads using <strong>Pull</strong>. For failed uploads, open <strong>Needs Attention</strong>, filter attendance dates and employees, then review and retry selected records.</li>
+        <li>Retry device downloads using <strong>Pull</strong>. For failed uploads, open <strong>Logs Needing Review</strong>, filter attendance dates and employees, then review and retry selected records.</li>
         <li>Restart the Integration App.</li>
       </ul>
     `
@@ -539,7 +539,7 @@ const faqItems = [
       <ul class="list-disc ml-5 mt-1 space-y-1">
         <li><strong>Synced</strong> (green) &mdash; Successfully pushed to the payroll system</li>
         <li><strong>Pending</strong> (yellow) &mdash; Pulled from device but not yet pushed to payroll</li>
-        <li><strong>Error</strong> (red) &mdash; Push failed. Check the error message for details. Open Needs Attention to review and retry failed records. Unconfirmed uploads may already exist in Payroll; check them before retrying.</li>
+        <li><strong>Failed</strong> (red) or <strong>Unconfirmed</strong> (amber) &mdash; An upload needs review. Check the error message for details. Open Logs Needing Review to review and retry failed records. Unconfirmed uploads may already exist in Payroll; check them before retrying.</li>
       </ul>
     `
   },
@@ -573,8 +573,8 @@ const faqItems = [
       <p>There are two places to check:</p>
       <ul class="list-disc ml-5 mt-2 space-y-1">
         <li><strong>Logs page</strong> &mdash; Shows sync operation history (pull/push) with status, record counts, and error messages</li>
-        <li><strong>Needs Attention</strong> &mdash; Review failed and unconfirmed uploads, select a date range and employees, and retry selected destinations in bulk. Automatic push only sends records that have never been attempted.</li>
-        <li><strong>Attendance Records page</strong> &mdash; Filter by "Errors" status to see individual records that failed to sync, along with the specific error reason</li>
+        <li><strong>Logs Needing Review</strong> &mdash; Review failed and unconfirmed uploads, select a date range and employees, and retry selected destinations in bulk. Automatic push only sends records that have never been attempted.</li>
+        <li><strong>Attendance Records page</strong> &mdash; Filter by "Failed / Unconfirmed" status to see individual records that failed to sync, along with the specific error reason</li>
       </ul>
       <p class="mt-2">For deeper debugging, use <strong>System Logs</strong> in Configuration to view raw application log files.</p>
     `

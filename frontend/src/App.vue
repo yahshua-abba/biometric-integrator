@@ -146,7 +146,7 @@ const HelpIcon = () => h('svg', { fill: 'none', stroke: 'currentColor', viewBox:
 const views = [
   { id: 'dashboard', label: 'Overview', icon: DashboardIcon, component: DashboardView },
   { id: 'timesheets', label: 'Attendance Records', icon: TimesheetIcon, component: TimesheetView },
-  { id: 'retry', label: 'Needs Attention', icon: TimesheetIcon, component: RetryQueueView },
+  { id: 'retry', label: 'Logs Needing Review', icon: TimesheetIcon, component: RetryQueueView },
   { id: 'config', label: 'Configuration', icon: ConfigIcon, component: ConfigView },
   { id: 'logs', label: 'Logs', icon: LogsIcon, component: LogsView },
   { id: 'updates', label: 'Updates', icon: UpdatesIcon, component: UpdatesView },

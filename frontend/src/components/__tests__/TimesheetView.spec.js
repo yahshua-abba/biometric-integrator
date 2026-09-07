@@ -24,6 +24,7 @@ async function show(fields) {
   wrapper = mount(TimesheetView, { global: { stubs: { SyncProgressModal: true } } })
   await flushPromises()
   const filter = wrapper.findAll('select').find(s => s.find('option[value="duplicate"]').exists())
+  expect(filter.element.value).toBe('all')
   await filter.setValue('all')
   return wrapper.find('tbody tr')
 }
@@ -44,7 +45,7 @@ describe('per-destination duplicate status', () => {
 
   it('allows Do Not Sync when primary succeeded but secondary is pending', async () => {
     const row = await show({ sync_error_message_2: 'Connection failed' })
-    expect(row.text()).toContain('Partial / Error')
+    expect(row.text()).toContain('Failed')
     await row.find('[title="Mark as do-not-sync"]').trigger('click')
     expect(bridge.setTimesheetExcluded).toHaveBeenCalledWith([1], true)
   })
@@ -76,11 +77,35 @@ describe('first uploads and manual retry entry points', () => {
     const row = await show({ sync_error_message_2: 'Timeout', delivery_outcome_2: 'unconfirmed' })
     const listener = vi.fn()
     window.addEventListener('openRetryQueue', listener, { once: true })
-    await row.find('[title="Review in Needs Attention"]').trigger('click')
+    await row.find('[title="Review in Logs Needing Review"]').trigger('click')
     expect(listener.mock.calls[0][0].detail).toEqual({
       employee: { employee_id: 7, employee_name: 'Demo Employee', employee_code: '4472' },
       date: new Date().toISOString().slice(0, 10), state: 'unconfirmed',
     })
     expect(bridge.startPushSyncForIds).not.toHaveBeenCalled()
   })
+})
+
+
+it('uses shared pagination while preserving page selections and clearing changed filter selections', async () => {
+  await show({})
+  const original = bridge.getAllTimesheets.mock.results[0]
+  const fields = (await original.value).data[0]
+  bridge.getAllTimesheets.mockResolvedValue({ data: Array.from({ length: 60 }, (_, i) => ({ ...fields, id: i + 1, new_uploads: 1 })) })
+  const button = text => wrapper.findAll('button').find(b => b.text().trim() === text)
+  await button('Refresh').trigger('click'); await flushPromises()
+  expect(wrapper.findAll('tbody tr')).toHaveLength(25)
+  await wrapper.find('tbody input').setValue(true)
+  await button('Next').trigger('click')
+  expect(wrapper.find('footer').text()).toContain('26–50 of 60 records')
+  await wrapper.find('tbody input').setValue(true)
+  expect(wrapper.text()).toContain('2 selected')
+  await wrapper.findAll('button').find(b => b.text().includes('Send New Selected')).trigger('click')
+  expect(bridge.startPushSyncForIds).toHaveBeenCalledWith([1, 26])
+  await wrapper.find('footer select').setValue('50')
+  expect(wrapper.findAll('tbody tr')).toHaveLength(50)
+  expect(wrapper.find('footer').text()).toContain('1–50 of 60 records')
+  await button('All dates').trigger('click')
+  expect(wrapper.findAll('input[type="date"]').map(i => i.element.value)).toEqual(['', ''])
+  expect(wrapper.text()).not.toContain('2 selected')
 })

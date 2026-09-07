@@ -2,7 +2,7 @@
   <div>
     <header class="bg-slate-900 text-white p-6 space-y-4">
       <div class="flex flex-wrap justify-between gap-3"><h1 class="text-xl font-semibold">Mini Payroll · Manual retry demo</h1><a class="underline" href="/">Deletion replay demo</a></div>
-      <p class="text-slate-300">Synthetic employees only. This is the app’s actual Needs Attention page, connected to a local test Payroll.</p>
+      <p class="text-slate-300">Synthetic employees only. This is the app’s actual Logs Needing Review page, connected to a local test Payroll.</p>
       <ol class="list-decimal ml-5 text-sm space-y-1 text-slate-300"><li>Run ordinary sync: employee mapping failures and missing confirmations enter the queue.</li><li>Fix employee mappings, then run ordinary sync again: the failed records stay in the queue.</li><li>View employees, filter a date range, and open an employee’s logs. Review a selection before retrying.</li></ol>
       <div class="flex flex-wrap gap-3"><button v-for="[method, label] in controls" :key="method" :disabled="busy" class="btn bg-slate-700 hover:bg-slate-600 disabled:opacity-50" @click="action(method)">{{ label }}</button></div>
       <p role="status">{{ message }}</p>
