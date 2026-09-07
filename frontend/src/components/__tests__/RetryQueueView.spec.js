@@ -119,3 +119,20 @@ describe('scalable Retry Queue', () => {
     expect(wrapper.findAll('tbody tr')).toHaveLength(0)
   })
 })
+
+
+it('opens a contextual attendance review without selecting or resending uploads', async () => {
+  bridge.getRetryQueuePage.mockResolvedValue({ data: summary([{ ...base, id: 1, state: 'unconfirmed' }]) })
+  wrapper = mount(RetryQueueView, { props: { initialContext: {
+    employee: { employee_id: 1, employee_name: 'Mara' }, date: '2026-08-24', state: 'unconfirmed',
+  } } })
+  await flushPromises()
+  expect(bridge.getRetryQueuePage).toHaveBeenLastCalledWith(expect.objectContaining({
+    employee_ids: [1], date_from: '2026-08-24', date_to: '2026-08-24', state: 'unconfirmed', mode: 'logs',
+  }))
+  expect(wrapper.text()).toContain('These uploads may already be in Payroll')
+  expect(wrapper.find('tbody input').element.checked).toBe(false)
+  expect(bridge.retryTimesheets).not.toHaveBeenCalled()
+  await wrapper.setProps({ initialContext: null }); await flushPromises()
+  expect(bridge.getRetryQueuePage).toHaveBeenLastCalledWith(expect.objectContaining({ employee_ids: [], date_from: '', state: 'failed', mode: 'employees' }))
+})

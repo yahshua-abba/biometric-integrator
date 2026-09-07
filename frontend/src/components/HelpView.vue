@@ -25,7 +25,7 @@
           <h3 class="font-semibold text-gray-800 mb-2">Synchronization Modes</h3>
           <ul class="space-y-2 text-gray-600">
             <li><strong>Pull Mode</strong> &mdash; The app automatically retrieves attendance data from the ZKTeco device at scheduled intervals. Use "Pull Data Now" for manual, immediate syncing.</li>
-            <li><strong>Push Mode</strong> &mdash; The system uploads retrieved attendance data to the Cloud Payroll system. Use "Push Data Now" to manually send logs when needed.</li>
+            <li><strong>Push Mode</strong> &mdash; The system uploads retrieved attendance data to the Cloud Payroll system. Use "Send New Uploads" for first attempts. Review failed or unconfirmed uploads in Needs Attention before retrying.</li>
           </ul>
         </div>
       </div>
@@ -262,22 +262,22 @@
         </li>
         <li class="flex gap-3">
           <span class="flex-shrink-0 w-6 h-6 bg-primary-100 text-primary-700 rounded-full flex items-center justify-center text-xs font-bold">2</span>
-          <span>Go to the <strong>Dashboard</strong> and click <strong>"Pull"</strong>. Select the date range and device.</span>
+          <span>Go to the <strong>Overview</strong> and click <strong>"Pull"</strong>. Select the date range and device.</span>
         </li>
         <li class="flex gap-3">
           <span class="flex-shrink-0 w-6 h-6 bg-primary-100 text-primary-700 rounded-full flex items-center justify-center text-xs font-bold">3</span>
-          <span>Confirm that the test attendance log appears correctly in the app's <strong>Timesheets</strong> page.</span>
+          <span>Confirm that the test attendance log appears correctly in the app's <strong>Attendance Records</strong> page.</span>
         </li>
       </ol>
     </div>
 
-    <!-- G. Push Data Now -->
+    <!-- G. Send New Uploads -->
     <div class="card">
       <h2 class="text-xl font-semibold mb-4 flex items-center gap-2">
         <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
         </svg>
-        G. Push Data Now
+        G. Send New Uploads
       </h2>
       <ol class="space-y-3 text-sm text-gray-700">
         <li class="flex gap-3">
@@ -286,7 +286,7 @@
         </li>
         <li class="flex gap-3">
           <span class="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">2</span>
-          <span>Click the <strong>"Push"</strong> button on the <strong>Dashboard</strong>.</span>
+          <span>Click the <strong>"Send New Uploads"</strong> button on the <strong>Overview</strong>.</span>
         </li>
         <li class="flex gap-3">
           <span class="flex-shrink-0 w-6 h-6 bg-green-100 text-green-700 rounded-full flex items-center justify-center text-xs font-bold">3</span>
@@ -499,7 +499,7 @@ const troubleshootingItems = [
         <li>Check your <strong>internet connection</strong>.</li>
         <li>Verify your <strong>login credentials</strong> in the Configuration page.</li>
         <li>Make sure <strong>employee IDs match</strong> between the Payroll System and the ZKTeco Device.</li>
-        <li>Retry device downloads using <strong>Pull</strong>. For failed uploads, open <strong>Retry Queue</strong>, filter attendance dates and employees, then review and retry selected records.</li>
+        <li>Retry device downloads using <strong>Pull</strong>. For failed uploads, open <strong>Needs Attention</strong>, filter attendance dates and employees, then review and retry selected records.</li>
         <li>Restart the Integration App.</li>
       </ul>
     `
@@ -539,7 +539,7 @@ const faqItems = [
       <ul class="list-disc ml-5 mt-1 space-y-1">
         <li><strong>Synced</strong> (green) &mdash; Successfully pushed to the payroll system</li>
         <li><strong>Pending</strong> (yellow) &mdash; Pulled from device but not yet pushed to payroll</li>
-        <li><strong>Error</strong> (red) &mdash; Push failed. Check the error message for details. Open Retry Queue to review and retry failed records. Unconfirmed uploads may already exist in Payroll; check them before retrying.</li>
+        <li><strong>Error</strong> (red) &mdash; Push failed. Check the error message for details. Open Needs Attention to review and retry failed records. Unconfirmed uploads may already exist in Payroll; check them before retrying.</li>
       </ul>
     `
   },
@@ -557,7 +557,7 @@ const faqItems = [
         <li><strong>Pull</strong> &mdash; Retrieves (downloads) attendance data <em>from</em> the ZKTeco device into the Integration App. The data is stored locally until pushed.</li>
         <li><strong>Push</strong> &mdash; Uploads (sends) the locally stored attendance data <em>to</em> the YAHSHUA Web Payroll system.</li>
       </ul>
-      <p class="mt-2">Both can run automatically on a schedule or be triggered manually from the Dashboard.</p>
+      <p class="mt-2">Both can run automatically on a schedule or be triggered manually from the Overview.</p>
     `
   },
   {
@@ -573,8 +573,8 @@ const faqItems = [
       <p>There are two places to check:</p>
       <ul class="list-disc ml-5 mt-2 space-y-1">
         <li><strong>Logs page</strong> &mdash; Shows sync operation history (pull/push) with status, record counts, and error messages</li>
-        <li><strong>Retry Queue</strong> &mdash; Review failed and unconfirmed uploads, select a date range and employees, and retry selected destinations in bulk. Automatic push only sends records that have never been attempted.</li>
-        <li><strong>Timesheets page</strong> &mdash; Filter by "Errors" status to see individual records that failed to sync, along with the specific error reason</li>
+        <li><strong>Needs Attention</strong> &mdash; Review failed and unconfirmed uploads, select a date range and employees, and retry selected destinations in bulk. Automatic push only sends records that have never been attempted.</li>
+        <li><strong>Attendance Records page</strong> &mdash; Filter by "Errors" status to see individual records that failed to sync, along with the specific error reason</li>
       </ul>
       <p class="mt-2">For deeper debugging, use <strong>System Logs</strong> in Configuration to view raw application log files.</p>
     `

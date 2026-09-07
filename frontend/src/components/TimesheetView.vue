@@ -6,7 +6,7 @@
       <div class="relative bg-white rounded-lg shadow-xl w-full max-w-md mx-4">
         <!-- Modal Header -->
         <div class="flex items-center justify-between p-4 border-b">
-          <h3 class="text-lg font-semibold text-red-600">Clear Timesheet Records</h3>
+          <h3 class="text-lg font-semibold text-red-600">Clear Attendance Records</h3>
           <button @click="closeClearModal" class="text-gray-500 hover:text-gray-700">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
@@ -133,19 +133,19 @@
 
     <SyncProgressModal :show="showProgressModal" :configs="pushConfigs" />
 
-    <div class="flex items-center justify-between">
-      <h1 class="text-3xl font-bold text-gray-900">Timesheet Records</h1>
-      <div class="flex gap-2">
+    <div class="flex flex-wrap items-center justify-between gap-4">
+      <h1 class="text-3xl font-bold text-gray-900">Attendance Records</h1>
+      <div class="flex flex-wrap gap-2">
         <button
           @click="syncSelected"
-          :disabled="selectedIds.length === 0 || pushLoading"
+          :disabled="newSelectedIds.length === 0 || pushLoading"
           class="btn bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          :title="selectedIds.length === 0 ? 'Select pending or failed records to sync' : `Sync ${selectedIds.length} selected record(s)`"
+          title="Send only uploads that have never been attempted. Review retries in Needs Attention."
         >
           <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
           </svg>
-          Sync Selected ({{ selectedIds.length }})
+          Send New Selected ({{ newSelectedIds.length }})
         </button>
         <button
           v-if="selectedIds.length > 0"
@@ -154,7 +154,8 @@
           title="Mark selected records as do-not-sync"
         >
           <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636m12.728 12.728L5.636 5.636" />
+            <circle cx="12" cy="12" r="9" stroke-width="2" />
+            <path d="M5.64 5.64 18.36 18.36" stroke-linecap="round" stroke-width="2" />
           </svg>
           Mark Do Not Sync
         </button>
@@ -204,6 +205,8 @@
         </button>
       </div>
     </div>
+
+    <p class="text-sm text-gray-500 my-4">Each row is one attendance record. Send New Selected sends only first attempts to each Payroll destination. For failed or unconfirmed uploads, <button class="text-primary-700 underline" @click="openRetryQueue">review retries in Needs Attention</button>.</p>
 
     <!-- Filters -->
     <div class="card">
@@ -256,7 +259,7 @@
         Loading timesheets...
       </div>
       <div v-else-if="filteredTimesheets.length === 0" class="text-center py-8 text-gray-500">
-        No timesheet records found
+        No attendance records match these filters
       </div>
       <div v-else class="overflow-x-auto">
         <table class="min-w-full divide-y divide-gray-200">
@@ -384,9 +387,9 @@
                 <div v-if="!entry.deleted_at" class="flex items-center gap-3">
                   <button
                     v-if="combinedStatus(entry) === 'error'"
-                    @click="retrySync(entry.id)"
+                    @click="retrySync(entry)"
                     class="text-primary-600 hover:text-primary-900"
-                    title="Review in Retry Queue"
+                    title="Review in Needs Attention"
                   >
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -399,7 +402,8 @@
                     :title="entry.excluded_from_sync ? 'Restore — allow syncing' : 'Mark as do-not-sync'"
                   >
                     <svg v-if="!entry.excluded_from_sync" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636" />
+                      <circle cx="12" cy="12" r="9" stroke-width="2" />
+                      <path d="M5.64 5.64 18.36 18.36" stroke-linecap="round" stroke-width="2" />
                     </svg>
                     <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -470,7 +474,7 @@ const timesheets = ref([])
 const devices = ref([])
 const loading = ref(false)
 const searchQuery = ref('')
-const filterStatus = ref('pending')
+const filterStatus = ref('all')
 const filterDevice = ref('all')
 const filterDateFrom = ref('')
 const filterDateTo = ref('')
@@ -497,7 +501,7 @@ const slotSynced = (entry, slot) => {
 const slotSkipped = (entry, slot) => !!(slot === 2 ? entry.sync_skipped_reason_2 : entry.sync_skipped_reason)
 const slotError = (entry, slot) => {
   if (slotSynced(entry, slot) || slotSkipped(entry, slot)) return false
-  return !!(slot === 2 ? entry.sync_error_message_2 : entry.sync_error_message)
+  return ['failed', 'unconfirmed', 'sending'].includes(entry[`delivery_outcome_${slot}`]) || !!(slot === 2 ? entry.sync_error_message_2 : entry.sync_error_message)
 }
 
 const activeSlots = computed(() => (config2Active.value ? [1, 2] : [1]))
@@ -555,6 +559,8 @@ const statusTitle = (entry) => {
 // A row is selectable if it has not yet been fully synced (to all active destinations).
 // (Excluded rows are still selectable so the user can unmark them in bulk.)
 const isSelectable = (entry) => !isFullyResolved(entry)
+const newSelectedIds = computed(() => timesheets.value
+  .filter(t => selectedIds.value.includes(t.id) && t.new_uploads > 0).map(t => t.id))
 
 const selectableIdsOnPage = computed(() =>
   paginatedTimesheets.value.filter(isSelectable).map(e => e.id)
@@ -794,19 +800,8 @@ const loadData = async () => {
 const syncSelected = async () => {
   if (selectedIds.value.length === 0 || pushLoading.value) return
 
-  // Skip excluded records — they're marked do-not-sync.
-  const byId = new Map(timesheets.value.map(t => [t.id, t]))
-  const syncableIds = selectedIds.value.filter(id => {
-    const t = byId.get(id)
-    return t && !t.excluded_from_sync && !isFullyResolved(t)
-  })
-  if (syncableIds.length === 0) {
-    error('All selected records are marked do-not-sync or already synced.')
-    return
-  }
-  if (syncableIds.length < selectedIds.value.length) {
-    success(`Skipping ${selectedIds.value.length - syncableIds.length} do-not-sync record(s).`)
-  }
+  const syncableIds = newSelectedIds.value
+  if (!syncableIds.length) return
 
   pushLoading.value = true
   showProgressModal.value = true
@@ -882,7 +877,12 @@ const bulkSetExcluded = async (excluded) => {
   }
 }
 
-const retrySync = () => window.dispatchEvent(new Event('openRetryQueue'))
+const retrySync = entry => window.dispatchEvent(new CustomEvent('openRetryQueue', { detail: {
+  employee: { employee_id: entry.employee_id, employee_name: entry.employee_name, employee_code: entry.employee_code },
+  date: entry.date,
+  state: activeSlots.value.some(slot => !slotSynced(entry, slot) && !slotSkipped(entry, slot) && ['unconfirmed', 'sending'].includes(entry[`delivery_outcome_${slot}`])) ? 'unconfirmed' : 'failed'
+} }))
+const openRetryQueue = () => window.dispatchEvent(new Event('openRetryQueue'))
 
 onMounted(async () => {
   // Initialize date filters

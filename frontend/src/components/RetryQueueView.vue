@@ -1,7 +1,7 @@
 <template>
   <main class="retry-queue p-6 lg:p-8 max-w-screen-2xl mx-auto space-y-5">
     <header class="flex items-start justify-between gap-4">
-      <div><h1 class="text-2xl font-semibold tracking-tight text-gray-900">Retry Queue</h1><p class="text-sm text-gray-500 mt-1">Review employees first, then the uploads that need attention. Retries are always manual.</p></div>
+      <div><h1 class="text-2xl font-semibold tracking-tight text-gray-900">Needs Attention</h1><p class="text-sm text-gray-500 mt-1">Review employees first, then the uploads that need attention. Retries are always manual.</p></div>
       <button class="btn btn-secondary text-sm" :disabled="loading" @click="load">Refresh</button>
     </header>
     <section class="bg-white border border-gray-200 rounded-lg" aria-label="Retry filters">
@@ -90,6 +90,7 @@
 import { nextTick, computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import bridge from '../services/bridge'
 import RetryEmployeeFilter from './RetryEmployeeFilter.vue'
+const props = defineProps({ initialContext: { type: Object, default: null } })
 const empty = () => ({ rows: [], total: 0, uploads: 0, employees: 0, available: 0, page: 1, counts: { failed: 0, unconfirmed: 0 } })
 const data = ref(empty()), employees = ref([]), selected = ref([]), focusEmployee = ref(null)
 const filters = reactive({ date_from: '', date_to: '', slot: 0 })
@@ -182,6 +183,14 @@ function completed(event) {
   if (event.detail.manual_retry) { running.value = false; notice.value = event.detail.result?.message || 'Manual retry completed.' }
   load()
 }
+function applyContext(context) {
+  employees.value = context?.employee ? [context.employee] : []
+  filters.date_from = context?.date || ''; filters.date_to = context?.date || ''; filters.slot = 0
+  state.value = context?.state === 'unconfirmed' ? 'unconfirmed' : 'failed'
+  mode.value = context?.employee ? 'logs' : 'employees'
+}
+watch(() => props.initialContext, applyContext)
+applyContext(props.initialContext)
 onMounted(async () => {
   window.addEventListener('syncCompleted', completed)
   await bridge.whenReady(); if (disposed) return

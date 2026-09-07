@@ -782,6 +782,17 @@ class Database:
         finally:
             conn.close()
 
+    @staticmethod
+    def _new_upload_condition(slot):
+        """Match first-attempt eligibility for a timesheet alias t."""
+        backend, _, _ = _slot_cols(slot)
+        skipped = 'sync_skipped_reason_2' if slot == 2 else 'sync_skipped_reason'
+        return f"""t.{backend} IS NULL AND t.{skipped} IS NULL
+            AND t.status='success' AND COALESCE(t.excluded_from_sync,0)=0
+            AND t.deleted_at IS NULL
+            AND NOT EXISTS (SELECT 1 FROM delivery_attempt a
+                            WHERE a.sync_id=t.sync_id AND a.slot={slot})"""
+
     def get_timesheet_stats(self):
         """Count disjoint states across enabled destinations; skipped is not uploaded."""
         config = self.get_api_config() or {}
@@ -793,6 +804,7 @@ class Database:
             synced.append(f'{backend} IS NOT NULL')
             resolved.append(f'({backend} IS NOT NULL OR {skipped} IS NOT NULL)')
             errors.append(f'({backend} IS NULL AND {skipped} IS NULL AND {error} IS NOT NULL)')
+        new_uploads = ' + '.join(f'CASE WHEN {self._new_upload_condition(slot)} THEN 1 ELSE 0 END' for slot in slots)
         synced = ' AND '.join(synced)
         resolved = ' AND '.join(resolved)
         errors = ' OR '.join(errors)
@@ -800,12 +812,13 @@ class Database:
         try:
             row = conn.execute(f"""
                 SELECT COUNT(*) AS total,
+                    COALESCE(SUM({new_uploads}),0) AS new_uploads,
                     COALESCE(SUM(CASE WHEN {synced} THEN 1 ELSE 0 END), 0) AS synced,
                     COALESCE(SUM(CASE WHEN ({resolved}) AND NOT ({synced}) THEN 1 ELSE 0 END), 0) AS duplicates,
                     COALESCE(SUM(CASE WHEN NOT ({resolved}) AND COALESCE(excluded_from_sync, 0) = 1 THEN 1 ELSE 0 END), 0) AS excluded,
                     COALESCE(SUM(CASE WHEN NOT ({resolved}) AND COALESCE(excluded_from_sync, 0) = 0 AND ({errors}) THEN 1 ELSE 0 END), 0) AS errors,
                     COALESCE(SUM(CASE WHEN NOT ({resolved}) AND COALESCE(excluded_from_sync, 0) = 0 AND NOT ({errors}) THEN 1 ELSE 0 END), 0) AS pending
-                FROM timesheet WHERE deleted_at IS NULL
+                FROM timesheet t WHERE deleted_at IS NULL
             """).fetchone()
             return dict(row)
         finally:
@@ -922,12 +935,17 @@ class Database:
 
     def get_all_timesheets(self, limit=1000, offset=0):
         """Get all timesheet entries with pagination"""
+        config = self.get_api_config() or {}
+        slots = [1, 2] if config.get('push_enabled_2') and config.get('push_username_2') else [1]
+        new_uploads = ' + '.join(f'CASE WHEN {self._new_upload_condition(slot)} THEN 1 ELSE 0 END' for slot in slots)
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("""
+            cursor.execute(f"""
                 SELECT t.*, e.name as employee_name, e.employee_code,
-                       d.name as device_name
+                       d.name as device_name, ({new_uploads}) AS new_uploads,
+                       (SELECT outcome FROM delivery_attempt a WHERE a.sync_id=t.sync_id AND a.slot=1) AS delivery_outcome_1,
+                       (SELECT outcome FROM delivery_attempt a WHERE a.sync_id=t.sync_id AND a.slot=2) AS delivery_outcome_2
                 FROM timesheet t
                 JOIN employee e ON t.employee_id = e.id
                 LEFT JOIN device d ON t.device_id = d.id

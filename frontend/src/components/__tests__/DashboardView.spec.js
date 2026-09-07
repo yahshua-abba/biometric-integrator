@@ -71,33 +71,37 @@ describe('Push button disabled state', () => {
   })
 
   it('is disabled when pending=0 and errors=0 (nothing to push)', async () => {
-    const wrapper = await mountWithStats({ total: 50, synced: 50, pending: 0, errors: 0 })
+    const wrapper = await mountWithStats({ total: 50, synced: 50, new_uploads: 0, pending: 0, errors: 0 })
 
     const btn = wrapper.find('button.btn-success')
     expect(btn.attributes('disabled')).toBeDefined()
   })
 
   it('is enabled when pending > 0', async () => {
-    const wrapper = await mountWithStats({ total: 10, synced: 5, pending: 5, errors: 0 })
+    const wrapper = await mountWithStats({ total: 10, synced: 5, new_uploads: 5, pending: 5, errors: 0 })
 
     const btn = wrapper.find('button.btn-success')
     expect(btn.attributes('disabled')).toBeUndefined()
   })
 
-  it('is enabled when errors > 0 and pending = 0 (REGRESSION for Bug #2)', async () => {
-    /**
-     * Before the fix, this button would be disabled because stats.pending === 0.
-     * But error records are still in the unsynced queue and CAN be pushed.
-     * The fix changes the condition to: (stats.pending + stats.errors) === 0
-     */
-    const wrapper = await mountWithStats({ total: 10, synced: 5, pending: 0, errors: 5 })
-
+  it('cannot send when only previously attempted errors remain', async () => {
+    const wrapper = await mountWithStats({ total: 10, synced: 5, new_uploads: 0, pending: 0, errors: 5 })
     const btn = wrapper.find('button.btn-success')
-    expect(btn.attributes('disabled')).toBeUndefined()
+    expect(btn.attributes('disabled')).toBeDefined()
+    await btn.trigger('click')
+    expect(mockBridge.startPushSync).not.toHaveBeenCalled()
+    wrapper.unmount()
+  })
+
+  it('allows a first upload to another destination despite an existing error', async () => {
+    const wrapper = await mountWithStats({ total: 1, new_uploads: 1, pending: 0, errors: 1 })
+    expect(wrapper.find('button.btn-success').attributes('disabled')).toBeUndefined()
+    expect(wrapper.find('button.btn-success').text()).toContain('Send New Uploads (1)')
+    wrapper.unmount()
   })
 
   it('is disabled while a push is in progress (prevents double-submit)', async () => {
-    const wrapper = await mountWithStats({ total: 10, synced: 5, pending: 5, errors: 0 })
+    const wrapper = await mountWithStats({ total: 10, synced: 5, new_uploads: 5, pending: 5, errors: 0 })
 
     // Trigger push but don't resolve it — keeps pushLoading = true
     mockBridge.startPushSync.mockReturnValue(new Promise(() => {}))
@@ -109,7 +113,7 @@ describe('Push button disabled state', () => {
   })
 
   it('is enabled when both pending and errors exist', async () => {
-    const wrapper = await mountWithStats({ total: 20, synced: 5, pending: 3, errors: 12 })
+    const wrapper = await mountWithStats({ total: 20, synced: 5, new_uploads: 3, pending: 3, errors: 12 })
 
     const btn = wrapper.find('button.btn-success')
     expect(btn.attributes('disabled')).toBeUndefined()

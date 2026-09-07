@@ -49,7 +49,7 @@
           <button
             v-for="view in views"
             :key="view.id"
-            @click="currentView = view.id"
+            @click="navigate(view.id)"
             :title="sidebarCollapsed ? view.label : ''"
             :class="[
               'w-full flex items-center rounded-lg text-left transition-colors',
@@ -81,7 +81,7 @@
 
     <!-- Main Content -->
     <div :class="['transition-[margin] duration-200 ease-out', sidebarCollapsed ? 'ml-16' : 'ml-64']">
-      <component :is="currentViewComponent" />
+      <component :is="currentViewComponent" v-bind="currentView === 'retry' ? { initialContext: retryContext } : {}" />
     </div>
 
     <!-- Toast Notifications -->
@@ -144,9 +144,9 @@ const HelpIcon = () => h('svg', { fill: 'none', stroke: 'currentColor', viewBox:
 ])
 
 const views = [
-  { id: 'dashboard', label: 'Dashboard', icon: DashboardIcon, component: DashboardView },
-  { id: 'timesheets', label: 'Timesheets', icon: TimesheetIcon, component: TimesheetView },
-  { id: 'retry', label: 'Retry Queue', icon: TimesheetIcon, component: RetryQueueView },
+  { id: 'dashboard', label: 'Overview', icon: DashboardIcon, component: DashboardView },
+  { id: 'timesheets', label: 'Attendance Records', icon: TimesheetIcon, component: TimesheetView },
+  { id: 'retry', label: 'Needs Attention', icon: TimesheetIcon, component: RetryQueueView },
   { id: 'config', label: 'Configuration', icon: ConfigIcon, component: ConfigView },
   { id: 'logs', label: 'Logs', icon: LogsIcon, component: LogsView },
   { id: 'updates', label: 'Updates', icon: UpdatesIcon, component: UpdatesView },
@@ -158,7 +158,9 @@ const currentViewComponent = computed(() => {
   return view ? view.component : DashboardView
 })
 
-const openRetryQueue = () => { currentView.value = 'retry' }
+const retryContext = ref(null)
+const navigate = id => { retryContext.value = null; currentView.value = id }
+const openRetryQueue = event => { retryContext.value = event.detail || null; currentView.value = 'retry' }
 onUnmounted(() => window.removeEventListener('openRetryQueue', openRetryQueue))
 onMounted(async () => {
   window.addEventListener('openRetryQueue', openRetryQueue)

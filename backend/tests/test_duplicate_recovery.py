@@ -135,7 +135,7 @@ def test_stats_distinguish_duplicate_from_success_and_partial_delivery(seeded):
     assert db.get_timesheet_stats()['pending'] == 1
     db.mark_timesheet_synced(row, row, 2)
     assert db.get_timesheet_stats() == {'total': 1, 'synced': 0, 'duplicates': 1,
-                                      'excluded': 0, 'errors': 0, 'pending': 0}
+                                      'excluded': 0, 'errors': 0, 'pending': 0, 'new_uploads': 0}
 
 
 def test_history_baseline_does_not_relabel_a_duplicate_as_uploaded(seeded):
@@ -177,3 +177,41 @@ def test_overlapping_manual_and_scheduled_pushes_send_once_and_release_lock(seed
         assert first.result()[2]['success'] == 1
     assert svc.session.post.call_count == 1
     assert svc.push_data()[1] == 'No records to sync'
+
+
+def test_ui_readiness_tracks_each_destination_attempt(seeded):
+    db, row = seeded
+    assert db.get_timesheet_stats()['new_uploads'] == 2
+    assert db.get_all_timesheets()[0]['new_uploads'] == 2
+    db.claim_delivery([row], 1)
+    db.mark_timesheet_sync_failed(row, 'Employee missing', 1)
+    # An error on Payroll 1 must not hide the first upload for Payroll 2.
+    assert db.get_timesheet_stats()['pending'] == 0
+    assert db.get_timesheet_stats()['new_uploads'] == 1
+    entry = db.get_all_timesheets()[0]
+    assert entry['new_uploads'] == 1
+    assert entry['delivery_outcome_1'] == 'failed'
+    db.claim_delivery([row], 2)
+    db.mark_timesheet_sync_failed(row, 'Confirmation missing', 2, unconfirmed=True)
+    assert db.get_timesheet_stats()['new_uploads'] == 0
+    assert db.get_all_timesheets()[0]['delivery_outcome_2'] == 'unconfirmed'
+    # Missing local error text must never make an attempted upload look new.
+    conn = db.get_connection()
+    conn.execute('UPDATE timesheet SET sync_error_message=NULL, sync_error_message_2=NULL')
+    conn.commit(); conn.close()
+    assert db.get_all_timesheets()[0]['new_uploads'] == 0
+    assert db.get_timesheet_stats()['new_uploads'] == 0
+
+
+def test_ui_readiness_excludes_inactive_excluded_and_deleted(seeded):
+    db, row = seeded
+    db.update_api_config(push_enabled_2=0)
+    assert db.get_timesheet_stats()['new_uploads'] == 1
+    assert db.get_all_timesheets()[0]['new_uploads'] == 1
+    db.set_timesheets_excluded([row], True)
+    assert db.get_timesheet_stats()['new_uploads'] == 0
+    assert db.get_all_timesheets()[0]['new_uploads'] == 0
+    db.set_timesheets_excluded([row], False)
+    db.soft_delete_timesheets_by_ids([row])
+    assert db.get_timesheet_stats()['new_uploads'] == 0
+    assert db.get_all_timesheets() == []
