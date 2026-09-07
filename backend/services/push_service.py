@@ -7,6 +7,8 @@ import requests
 import logging
 from datetime import datetime
 import json
+import threading
+from services.sync_errors import is_duplicate_error
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +84,7 @@ class PushService:
 
     def __init__(self, database, slot=1):
         self.database = database
+        self._push_lock = threading.Lock()
         self.slot = int(slot)
         self.suffix = '_2' if self.slot == 2 else ''
         self.label = "Payroll 2 (Secondary)" if self.slot == 2 else "Payroll 1 (Primary)"
@@ -211,7 +214,22 @@ class PushService:
         except Exception as e:
             return False, str(e)
 
+    def _is_duplicate_error(self, error_code, reason):
+        return is_duplicate_error(error_code, reason)
+
     def push_data(self, progress_callback=None, timesheet_ids=None):
+        """Serialize manual and scheduled uploads sharing this destination service."""
+        if not self._push_lock.acquire(blocking=False):
+            return False, f'{self.label}: a sync is already running', {
+                'processed': 0, 'success': 0, 'failed': 0, 'skipped': 0,
+                'duplicates': 0, 'batches_completed': 0, 'batches_total': 0, 'reasons': {}
+            }
+        try:
+            return self._push_data(progress_callback, timesheet_ids)
+        finally:
+            self._push_lock.release()
+
+    def _push_data(self, progress_callback=None, timesheet_ids=None):
         """
         Push unsynced timesheet data to YAHSHUA Payroll in batches of 50
 
@@ -232,6 +250,7 @@ class PushService:
             'success': 0,
             'failed': 0,
             'skipped': 0,
+            'duplicates': 0,
             'batches_completed': 0,
             'batches_total': 0,
             # Distinct failure reasons -> count, so the UI can show WHY records failed
@@ -345,6 +364,11 @@ class PushService:
                         error_code = failed_log.get('error_code', 0)
 
                         friendly_msg = get_friendly_yahshua_error(error_code, reason)
+                        if self._is_duplicate_error(error_code, reason):
+                            self.database.mark_timesheet_duplicate(local_id, friendly_msg, slot=self.slot)
+                            stats['duplicates'] += 1
+                            logger.info(f"{self.label}: timesheet {local_id} duplicate skipped for this destination: {friendly_msg}")
+                            continue
                         self.database.mark_timesheet_sync_failed(local_id, friendly_msg, slot=self.slot)
                         stats['failed'] += 1
                         stats['reasons'][friendly_msg] = stats['reasons'].get(friendly_msg, 0) + 1
@@ -404,6 +428,8 @@ class PushService:
             else:
                 message = f"Push completed: {stats['success']} records synced successfully"
 
+            if stats['duplicates']:
+                message += f"; {stats['duplicates']} duplicate(s) skipped, will not retry"
             logger.info(message)
             return batch_error is None, message, stats
 
@@ -462,7 +488,7 @@ class PushService:
 
             elif response.status_code == 400:
                 # Bad request - check for partial success
-                if data.get('logs_successfully_sync'):
+                if data.get('logs_successfully_sync') or data.get('logs_not_sync'):
                     return True, data
                 return False, {'error': data.get('message', 'Bad request')}
 
@@ -479,8 +505,9 @@ class PushService:
                     json=payload,
                     timeout=60
                 )
-                if retry_response.status_code == 200:
-                    return True, retry_response.json()
+                retry_data = retry_response.json()
+                if retry_response.status_code == 200 or (retry_response.status_code == 400 and (retry_data.get('logs_successfully_sync') or retry_data.get('logs_not_sync'))):
+                    return True, retry_data
                 friendly = get_friendly_http_error(retry_response.status_code)
                 logger.error(f"Retry after re-auth failed: HTTP {retry_response.status_code}")
                 return False, {'error': f'Authentication failed after retry: {friendly}'}

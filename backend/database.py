@@ -10,6 +10,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 import logging
+from services.sync_errors import is_duplicate_error
 
 logger = logging.getLogger(__name__)
 
@@ -357,6 +358,29 @@ class Database:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_device_deleted_at ON device(deleted_at)")
             cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_device_unique_ip_active ON device(ip) WHERE deleted_at IS NULL")
 
+            # A duplicate is terminal for its destination, but is not a successful upload.
+            for column in ('sync_skipped_reason', 'sync_skipped_reason_2'):
+                if column not in {row[1] for row in cursor.execute('PRAGMA table_info(timesheet)')}:
+                    cursor.execute(f'ALTER TABLE timesheet ADD COLUMN {column} TEXT')
+            # Preserve known duplicate rejections from older builds before the scheduler starts.
+            for suffix in ('', '_2'):
+                columns = {row[1] for row in cursor.execute('PRAGMA table_info(timesheet)')}
+                error_col = f'sync_error_message{suffix}'
+                backend_col = f'backend_timesheet_id{suffix}'
+                skipped_col = f'sync_skipped_reason{suffix}'
+                if error_col in columns:
+                    rows = cursor.execute(f"""
+                        SELECT id, {error_col} FROM timesheet
+                        WHERE {backend_col} IS NULL AND {skipped_col} IS NULL
+                        AND {error_col} IS NOT NULL
+                    """).fetchall()
+                    for row_id, reason in rows:
+                        if is_duplicate_error(None, reason):
+                            cursor.execute(f"""
+                                UPDATE timesheet SET {skipped_col} = ?, {error_col} = NULL
+                                WHERE id = ?
+                            """, (reason, row_id))
+
             # Migrate existing device config from api_config to device table
             cursor.execute("SELECT COUNT(*) as count FROM device")
             if cursor.fetchone()['count'] == 0:
@@ -420,6 +444,7 @@ class Database:
                 JOIN employee e ON t.employee_id = e.id
                 LEFT JOIN device d ON t.device_id = d.id
                 WHERE t.{backend_col} IS NULL
+                AND t.{('sync_skipped_reason_2' if int(slot) == 2 else 'sync_skipped_reason')} IS NULL
                 AND t.status = 'success'
                 AND COALESCE(t.excluded_from_sync, 0) = 0
                 AND t.deleted_at IS NULL
@@ -446,6 +471,7 @@ class Database:
                 JOIN employee e ON t.employee_id = e.id
                 LEFT JOIN device d ON t.device_id = d.id
                 WHERE t.{backend_col} IS NULL
+                AND t.{('sync_skipped_reason_2' if int(slot) == 2 else 'sync_skipped_reason')} IS NULL
                 AND t.status = 'success'
                 AND COALESCE(t.excluded_from_sync, 0) = 0
                 AND t.deleted_at IS NULL
@@ -459,6 +485,7 @@ class Database:
     def mark_timesheet_synced(self, timesheet_id, backend_timesheet_id, slot=1):
         """Mark a timesheet entry as successfully synced to the given slot's destination"""
         backend_col, synced_col, error_col = _slot_cols(slot)
+        skipped_col = 'sync_skipped_reason_2' if int(slot) == 2 else 'sync_skipped_reason'
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -466,7 +493,8 @@ class Database:
                 UPDATE timesheet
                 SET {backend_col} = ?,
                     {synced_col} = ?,
-                    {error_col} = NULL
+                    {error_col} = NULL,
+                    {skipped_col} = NULL
                 WHERE id = ?
             """, (backend_timesheet_id, datetime.now(), timesheet_id))
             conn.commit()
@@ -496,6 +524,20 @@ class Database:
         finally:
             conn.close()
 
+    def mark_timesheet_duplicate(self, timesheet_id, reason, slot=1):
+        """Stop retrying a Payroll-rejected duplicate in just this destination."""
+        backend_col, _, error_col = _slot_cols(slot)
+        skipped_col = 'sync_skipped_reason_2' if int(slot) == 2 else 'sync_skipped_reason'
+        conn = self.get_connection()
+        try:
+            with conn:
+                conn.execute(f"""
+                    UPDATE timesheet SET {skipped_col} = ?, {error_col} = NULL
+                    WHERE id = ? AND {backend_col} IS NULL
+                """, (reason or 'Duplicate record already exists', timesheet_id))
+        finally:
+            conn.close()
+
     def baseline_slot_as_synced(self, slot):
         """Mark all currently-unsynced records as already synced for the given slot.
 
@@ -504,6 +546,7 @@ class Database:
         every not-yet-synced, non-deleted record for that slot. Returns rows updated.
         """
         backend_col, synced_col, error_col = _slot_cols(slot)
+        skipped_col = 'sync_skipped_reason_2' if int(slot) == 2 else 'sync_skipped_reason'
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -513,6 +556,7 @@ class Database:
                     {synced_col} = ?,
                     {error_col} = NULL
                 WHERE {backend_col} IS NULL
+                AND {skipped_col} IS NULL
                 AND deleted_at IS NULL
             """, (datetime.now(),))
             conn.commit()
@@ -525,57 +569,31 @@ class Database:
             conn.close()
 
     def get_timesheet_stats(self):
-        """Get statistics about timesheet entries.
-
-        When the second push destination is enabled, a record only counts as
-        "synced" once it has been pushed to BOTH destinations; it is an error if
-        either destination failed, and pending if either is still awaiting push.
-        When Config 2 is disabled, behaviour is identical to the single-config app.
-        """
+        """Count disjoint states across enabled destinations; skipped is not uploaded."""
         config = self.get_api_config() or {}
-        config2_enabled = bool(config.get('push_enabled_2')) and bool(config.get('push_username_2'))
-
+        slots = [1, 2] if config.get('push_enabled_2') and config.get('push_username_2') else [1]
+        synced, resolved, errors = [], [], []
+        for slot in slots:
+            backend, _, error = _slot_cols(slot)
+            skipped = 'sync_skipped_reason_2' if slot == 2 else 'sync_skipped_reason'
+            synced.append(f'{backend} IS NOT NULL')
+            resolved.append(f'({backend} IS NOT NULL OR {skipped} IS NOT NULL)')
+            errors.append(f'({backend} IS NULL AND {skipped} IS NULL AND {error} IS NOT NULL)')
+        synced = ' AND '.join(synced)
+        resolved = ' AND '.join(resolved)
+        errors = ' OR '.join(errors)
         conn = self.get_connection()
-        cursor = conn.cursor()
         try:
-            if not config2_enabled:
-                cursor.execute("""
-                    SELECT
-                        COUNT(*) as total,
-                        SUM(CASE WHEN backend_timesheet_id IS NOT NULL THEN 1 ELSE 0 END) as synced,
-                        SUM(CASE WHEN backend_timesheet_id IS NULL AND sync_error_message IS NULL AND COALESCE(excluded_from_sync, 0) = 0 THEN 1 ELSE 0 END) as pending,
-                        SUM(CASE WHEN sync_error_message IS NOT NULL AND COALESCE(excluded_from_sync, 0) = 0 THEN 1 ELSE 0 END) as errors,
-                        SUM(CASE WHEN COALESCE(excluded_from_sync, 0) = 1 AND backend_timesheet_id IS NULL THEN 1 ELSE 0 END) as excluded
-                    FROM timesheet
-                    WHERE deleted_at IS NULL
-                """)
-            else:
-                # b1/b2 = backend ids, e1/e2 = error messages. A slot is:
-                #   synced  -> backend id IS NOT NULL
-                #   error   -> backend id IS NULL AND error message IS NOT NULL
-                #   pending -> both NULL
-                cursor.execute("""
-                    SELECT
-                        COUNT(*) as total,
-                        SUM(CASE WHEN backend_timesheet_id IS NOT NULL AND backend_timesheet_id_2 IS NOT NULL
-                                 THEN 1 ELSE 0 END) as synced,
-                        SUM(CASE WHEN COALESCE(excluded_from_sync, 0) = 0
-                                 AND NOT (backend_timesheet_id IS NOT NULL AND backend_timesheet_id_2 IS NOT NULL)
-                                 AND NOT ((backend_timesheet_id IS NULL AND sync_error_message IS NOT NULL)
-                                          OR (backend_timesheet_id_2 IS NULL AND sync_error_message_2 IS NOT NULL))
-                                 THEN 1 ELSE 0 END) as pending,
-                        SUM(CASE WHEN COALESCE(excluded_from_sync, 0) = 0
-                                 AND NOT (backend_timesheet_id IS NOT NULL AND backend_timesheet_id_2 IS NOT NULL)
-                                 AND ((backend_timesheet_id IS NULL AND sync_error_message IS NOT NULL)
-                                      OR (backend_timesheet_id_2 IS NULL AND sync_error_message_2 IS NOT NULL))
-                                 THEN 1 ELSE 0 END) as errors,
-                        SUM(CASE WHEN COALESCE(excluded_from_sync, 0) = 1
-                                 AND NOT (backend_timesheet_id IS NOT NULL AND backend_timesheet_id_2 IS NOT NULL)
-                                 THEN 1 ELSE 0 END) as excluded
-                    FROM timesheet
-                    WHERE deleted_at IS NULL
-                """)
-            return dict(cursor.fetchone())
+            row = conn.execute(f"""
+                SELECT COUNT(*) AS total,
+                    COALESCE(SUM(CASE WHEN {synced} THEN 1 ELSE 0 END), 0) AS synced,
+                    COALESCE(SUM(CASE WHEN ({resolved}) AND NOT ({synced}) THEN 1 ELSE 0 END), 0) AS duplicates,
+                    COALESCE(SUM(CASE WHEN NOT ({resolved}) AND COALESCE(excluded_from_sync, 0) = 1 THEN 1 ELSE 0 END), 0) AS excluded,
+                    COALESCE(SUM(CASE WHEN NOT ({resolved}) AND COALESCE(excluded_from_sync, 0) = 0 AND ({errors}) THEN 1 ELSE 0 END), 0) AS errors,
+                    COALESCE(SUM(CASE WHEN NOT ({resolved}) AND COALESCE(excluded_from_sync, 0) = 0 AND NOT ({errors}) THEN 1 ELSE 0 END), 0) AS pending
+                FROM timesheet WHERE deleted_at IS NULL
+            """).fetchone()
+            return dict(row)
         finally:
             conn.close()
 
@@ -609,8 +627,7 @@ class Database:
     def set_timesheets_excluded(self, ids, excluded):
         """Mark or unmark a list of timesheet IDs as excluded from sync.
 
-        Already-synced rows (backend_timesheet_id IS NOT NULL) are not modified —
-        once a record has been pushed, exclusion is meaningless.
+        Exclude pending delivery to either destination, including partially synced rows.
         Returns the number of rows updated.
         """
         if not ids:
@@ -623,7 +640,8 @@ class Database:
                 UPDATE timesheet
                 SET excluded_from_sync = ?
                 WHERE id IN ({placeholders})
-                AND backend_timesheet_id IS NULL
+                AND (backend_timesheet_id IS NULL OR backend_timesheet_id_2 IS NULL)
+                AND deleted_at IS NULL
             """, (1 if excluded else 0, *ids))
             conn.commit()
             return cursor.rowcount
@@ -637,8 +655,7 @@ class Database:
     def set_timesheets_excluded_by_date_range(self, date_from, date_to, excluded):
         """Mark or unmark all unsynced timesheets within a date range as excluded from sync.
 
-        Already-synced rows (backend_timesheet_id IS NOT NULL) and soft-deleted
-        rows are not modified. Returns the number of rows updated.
+        Rows delivered to both destinations and soft-deleted rows are not modified. Returns the number of rows updated.
         """
         conn = self.get_connection()
         cursor = conn.cursor()
@@ -647,7 +664,7 @@ class Database:
                 UPDATE timesheet
                 SET excluded_from_sync = ?
                 WHERE date >= ? AND date <= ?
-                AND backend_timesheet_id IS NULL
+                AND (backend_timesheet_id IS NULL OR backend_timesheet_id_2 IS NULL)
                 AND deleted_at IS NULL
             """, (1 if excluded else 0, date_from, date_to))
             conn.commit()

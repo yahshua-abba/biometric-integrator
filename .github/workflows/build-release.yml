@@ -16,7 +16,11 @@ permissions:
   contents: write  # Required to create releases and upload assets
 
 jobs:
+  tests:
+    uses: ./.github/workflows/test.yml
+
   build-macos:
+    needs: tests
     name: Build macOS DMG (Intel - Compatible with all Macs)
     runs-on: macos-15-intel  # Intel runner - works on Intel AND Apple Silicon (via Rosetta 2)
 
@@ -109,6 +113,7 @@ jobs:
           AWS_DEFAULT_REGION: ap-southeast-1
 
   build-windows:
+    needs: tests
     name: Build Windows EXE
     runs-on: windows-latest
 

@@ -44,11 +44,15 @@ export function showPushResultToasts(result, { success, error, info }) {
   const showLabel = perConfig.length > 1
   const syncedParts = []
   const failedParts = []
+  const duplicateParts = []
 
   for (const cfg of perConfig) {
     const label = cfg.label || `Payroll ${cfg.slot ?? ''}`.trim()
     const s = (cfg.stats && cfg.stats.success) || 0
     const f = (cfg.stats && cfg.stats.failed) || 0
+
+    const d = (cfg.stats && cfg.stats.duplicates) || 0
+    if (d > 0) duplicateParts.push(`${showLabel ? label + ': ' : ''}${d} duplicate(s) skipped; will not retry`)
 
     // A destination-level hard error (auth/network) counts as a failure.
     if (cfg.error) {
@@ -67,9 +71,10 @@ export function showPushResultToasts(result, { success, error, info }) {
 
   if (syncedParts.length) success(syncedParts.join('  ·  '))
   if (failedParts.length) error(failedParts.join('  ·  '))
+  if (duplicateParts.length && info) info(duplicateParts.join('  ·  '))
 
   // Nothing synced and nothing failed → there was nothing to push.
-  if (!syncedParts.length && !failedParts.length) {
+  if (!syncedParts.length && !failedParts.length && !duplicateParts.length) {
     if (info) info(result.message || 'No records to sync')
   }
 }

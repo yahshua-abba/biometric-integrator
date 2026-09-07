@@ -156,7 +156,12 @@
     </div>
 
     <!-- Statistics -->
-    <div class="grid grid-cols-4 gap-4">
+    <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div class="card">
+        <div class="text-sm text-gray-500">Duplicate skipped</div>
+        <div class="text-3xl font-bold text-gray-700">{{ stats.duplicates || 0 }}</div>
+        <div class="text-xs text-gray-500 mt-1">Will not be uploaded again</div>
+      </div>
       <div class="card">
         <div class="text-sm text-gray-600 mb-1">Total Records</div>
         <div class="text-3xl font-bold text-gray-900">{{ stats.total || 0 }}</div>
