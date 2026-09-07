@@ -91,3 +91,20 @@ def test_real_retry_queue_filters_manual_delivery_and_lost_acknowledgement(mini_
     retry_api(mini_payroll, 'sync').raise_for_status()
     snapshot = requests.get(mini_payroll + '/retry-state', timeout=10).json()
     assert snapshot['requests'] == 4 and not snapshot['payroll']
+
+
+def test_volume_demo_pages_and_retries_only_one_employee(mini_payroll):
+    retry_api(mini_payroll, 'large').raise_for_status()
+    page = retry_api(mini_payroll, 'getRetryQueuePage', {'state': 'failed', 'mode': 'employees'}).json()['data']
+    assert len(page['rows']) == 25 and page['total'] == 300
+    assert page['uploads'] == 19200
+    assert retry_api(mini_payroll, 'getRetrySelection', {'state': 'failed'}).status_code == 400
+    employee = page['rows'][0]['employee_id']
+    filters = {'state': 'failed', 'employee_ids': [employee]}
+    selected = retry_api(mini_payroll, 'getRetrySelection', filters).json()['data']
+    assert len(selected) == 64
+    retry_api(mini_payroll, 'fix').raise_for_status()
+    retry_api(mini_payroll, 'retryTimesheets', {'filters': filters, 'items': [{'id': r['id'], 'slot': r['slot']} for r in selected]}).raise_for_status()
+    remaining = retry_api(mini_payroll, 'getRetryQueuePage', filters).json()['data']
+    assert remaining['uploads'] == 0
+    assert remaining['counts']['unconfirmed'] == 16

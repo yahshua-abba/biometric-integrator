@@ -32,12 +32,13 @@ Stop with Ctrl+C to discard the temporary databases. Use `--port 8878` if needed
    destination records and two unconfirmed ones. Payroll shows one saved punch.
 2. **Fix employee mappings**, then **Run ordinary sync** again. The request count
    stays at two: attempted records never re-enter ordinary sync automatically.
-3. Filter both attendance dates to **2026-08-24**, select **Mara Santos**, and use
-   **Select all filtered → Review & retry selected → Retry 2 records now**.
+3. In **Failed → By employee**, filter both attendance dates to **2026-08-24**.
+   Select **Mara Santos** in the employee table, then use
+   **Review selected → Retry 2 uploads now**.
    Only Mara's two destinations are attempted; one succeeds and the other is
    recognized as an existing duplicate. Her entries leave the queue. Luis and
    Ana remain there, and the request count is now four.
-4. Clear the employee selection. Ana's unconfirmed records remain. The review
+4. Open the **Unconfirmed** tab. Ana's unconfirmed records remain. The review
    dialog requires checking Payroll before retrying. Her punch is already visible
    in the mini Payroll panel, so cancel the review rather than resending it.
 5. **HR deletes saved logs**, then **Run ordinary sync**. The saved-record count
@@ -46,8 +47,34 @@ Stop with Ctrl+C to discard the temporary databases. Use `--port 8878` if needed
 6. **Reset demo** restores fresh synthetic records. Fixing mappings does not retry;
    retries happen only through the dedicated page's reviewed selection.
 
-The page also supports multiple employees, destination and status filters,
-individual checkboxes, pagination, and selecting all filtered records across pages.
+The default view groups uploads by employee, with counts and attendance-date
+ranges. **View logs** opens one employee's records. The employee filter is a
+searchable popup with 20 results per page; it retains multiple chosen employees
+across searches. The main table loads 25 rows at a time from SQLite (25/50/100
+options), and shows Failed and Unconfirmed in separate tabs. **Review all filtered**
+freezes up to 10,000 eligible uploads before confirmation; new arrivals are never
+silently added. Larger selections require narrower filters.
+
+## Full desktop app and volume example
+
+Install the normal `backend/requirements.txt` desktop dependencies and build the
+production frontend (`cd frontend && npm run build`). Then, from the repo root:
+
+```bash
+python backend/demo/desktop.py --large
+```
+
+This opens the actual PyQt app and QWebChannel bridge, with an isolated temporary
+database and local mini Payroll at **http://127.0.0.1:8878/retry/**. No Vite server
+is needed. The window title includes **TEST / Mini Payroll**. `--large` adds 300
+synthetic employees, 12,000 attendance logs and 24,000 queued destination uploads.
+These volume failures are seeded locally; subsequent retries use real loopback
+HTTP. Employee mappings are already fixed for desktop retry testing. Omit
+`--large` for the original three-employee example. Close the app to discard the
+test database. Use `--payroll-port` / `--app-port` if defaults 8878/8890 are occupied.
+
+The standalone browser demo also offers **Load 300-employee example**. This lets
+you check paging, employee search and narrowed bulk retries at larger scale.
 
 ## Original deletion replay
 

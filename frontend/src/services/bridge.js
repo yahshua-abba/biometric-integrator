@@ -127,6 +127,10 @@ class BridgeService {
     return this.call('getUnsyncedTimesheets', limit)
   }
 
+  async getRetryQueuePage(filters) { return this.call('getRetryQueuePage', JSON.stringify(filters)) }
+
+  async getRetrySelection(filters) { return this.call('getRetrySelection', JSON.stringify(filters)) }
+
   async getRetryQueue(filters) { return this.call('getRetryQueue', JSON.stringify(filters)) }
 
   async retryTimesheets(payload) { return this.call('retryTimesheets', JSON.stringify(payload)) }

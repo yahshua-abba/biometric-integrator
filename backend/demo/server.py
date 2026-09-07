@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from database import Database
+from demo.fixtures import seed_large_queue
 from services.push_service import PushService
 
 
@@ -277,11 +278,18 @@ class Handler(BaseHTTPRequestHandler):
                     method = data.get('method')
                     if method == 'getRetryQueue':
                         result = {'data': lane.db.get_retry_queue(data.get('payload'))}
+                    elif method == 'getRetryQueuePage':
+                        result = {'data': lane.db.get_retry_queue_page(data.get('payload'))}
+                    elif method == 'getRetrySelection':
+                        result = {'data': lane.db.get_retry_selection(data.get('payload'))}
                     elif method == 'retryTimesheets':
                         result = lane.retry(data['payload'])
                     elif method == 'sync':
                         lane.sync()
                         result = {'message': 'Ordinary sync complete. Previously attempted records were not resent.'}
+                    elif method == 'large':
+                        seed_large_queue(lane.db)
+                        result = {'message': 'Added 300 synthetic employees and 12,000 attendance logs (24,000 destination uploads).'}
                     elif method == 'fix':
                         lane.mapping_fixed = True
                         result = {'message': 'Mini Payroll employee mappings corrected. Select records in the queue to retry.'}

@@ -58,3 +58,16 @@ def test_bridge_rejects_invalid_retry_payload_without_dispatch(seeded, bridge_cl
     bridge = bridge_class(db, None, svc)
     assert not json.loads(bridge.retryTimesheets(payload))['success']
     svc.push_data.assert_not_called()
+
+
+def test_bridge_paged_queue_and_frozen_bulk_selection(seeded, bridge_class):
+    db, row = seeded
+    db.claim_delivery([row], 1)
+    db.mark_timesheet_sync_failed(row, 'Failed', 1)
+    bridge = bridge_class(db, None, Mock(slot=1))
+    page = json.loads(bridge.getRetryQueuePage(json.dumps({'state': 'failed', 'mode': 'employees', 'page_size': 25})))
+    assert page['success'] and page['data']['total'] == 1
+    assert page['data']['rows'][0]['uploads'] == 1
+    selection = json.loads(bridge.getRetrySelection(json.dumps({'state': 'failed'})))
+    assert selection['success'] and [r['id'] for r in selection['data']] == [row]
+    assert not json.loads(bridge.getRetryQueuePage('{"page_size":10000}'))['success']
