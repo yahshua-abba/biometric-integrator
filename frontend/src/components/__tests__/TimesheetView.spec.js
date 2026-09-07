@@ -15,6 +15,12 @@ vi.mock('../../composables/useToast', () => ({ useToast: () => ({ success: vi.fn
 let wrapper
 afterEach(() => { wrapper?.unmount(); vi.clearAllMocks() })
 
+async function choose(label, text) {
+  await wrapper.find(`[role="combobox"][aria-label="${label}"]`).trigger('click')
+  const option = [...document.querySelectorAll('[role="option"]')].find(o => o.textContent.trim() === text)
+  option.click(); await flushPromises()
+}
+
 async function show(fields) {
   bridge.getAllTimesheets.mockResolvedValue({ data: [{
     id: 1, employee_id: 7, new_uploads: 0, employee_name: 'Demo Employee', employee_code: '4472',
@@ -23,9 +29,7 @@ async function show(fields) {
   }] })
   wrapper = mount(TimesheetView, { global: { stubs: { SyncProgressModal: true } } })
   await flushPromises()
-  const filter = wrapper.findAll('select').find(s => s.find('option[value="duplicate"]').exists())
-  expect(filter.element.value).toBe('all')
-  await filter.setValue('all')
+  expect(wrapper.find('[role="combobox"][aria-label="Status"]').text()).toContain('All records')
   return wrapper.find('tbody tr')
 }
 
@@ -36,10 +40,9 @@ describe('per-destination duplicate status', () => {
     expect(row.find('[title="Retry sync"]').exists()).toBe(false)
     expect(row.find('input[type="checkbox"]').exists()).toBe(false)
     expect(row.find('[title*="Time in range"]').exists()).toBe(true)
-    const filter = wrapper.findAll('select').find(s => s.find('option[value="duplicate"]').exists())
-    await filter.setValue('duplicate')
+    await choose('Status', 'Duplicate skipped')
     expect(wrapper.findAll('tbody tr')).toHaveLength(1)
-    await filter.setValue('synced')
+    await choose('Status', 'Synced')
     expect(wrapper.findAll('tbody tr')).toHaveLength(0)
   })
 
@@ -102,7 +105,7 @@ it('uses shared pagination while preserving page selections and clearing changed
   expect(wrapper.text()).toContain('2 selected')
   await wrapper.findAll('button').find(b => b.text().includes('Send New Selected')).trigger('click')
   expect(bridge.startPushSyncForIds).toHaveBeenCalledWith([1, 26])
-  await wrapper.find('footer select').setValue('50')
+  await choose('Rows per page', '50')
   expect(wrapper.findAll('tbody tr')).toHaveLength(50)
   expect(wrapper.find('footer').text()).toContain('1–50 of 60 records')
   await button('All dates').trigger('click')

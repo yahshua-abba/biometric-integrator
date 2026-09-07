@@ -8,7 +8,7 @@
       <div class="grid gap-4 p-4 sm:grid-cols-2 xl:grid-cols-4">
         <label class="text-xs font-medium text-gray-500">Attendance date from<input v-model="filters.date_from" type="date" class="input text-sm mt-1.5 text-gray-900" /></label>
         <label class="text-xs font-medium text-gray-500">Attendance date to<input v-model="filters.date_to" type="date" class="input text-sm mt-1.5 text-gray-900" /></label>
-        <label class="text-xs font-medium text-gray-500">Payroll destination<select v-model.number="filters.slot" class="input text-sm mt-1.5 text-gray-900"><option :value="0">All destinations</option><option :value="1">Payroll 1 (Primary)</option><option :value="2">Payroll 2 (Secondary)</option></select></label>
+        <div><span class="block text-xs font-medium text-gray-500">Payroll destination</span><AppSelect v-model="filters.slot" label="Payroll destination" :options="[{ value: 0, label: 'All destinations' }, { value: 1, label: 'Payroll 1 (Primary)' }, { value: 2, label: 'Payroll 2 (Secondary)' }]" class="mt-1.5" /></div>
         <RetryEmployeeFilter v-model="employees" :filters="filters" @open-change="pickerOpen = $event" />
       </div>
       <div class="px-4 pb-3 flex flex-wrap items-center gap-3 text-xs text-gray-500"><DateRangeShortcuts @change="range => Object.assign(filters, range)" /><span v-if="employees.length" class="ml-auto">{{ employeeSummary }}</span></div>
@@ -88,6 +88,7 @@ import { nextTick, computed, onMounted, onUnmounted, reactive, ref, watch } from
 import bridge from '../services/bridge'
 import RetryEmployeeFilter from './RetryEmployeeFilter.vue'
 import TablePagination from './TablePagination.vue'
+import AppSelect from './AppSelect.vue'
 import DateRangeShortcuts from './DateRangeShortcuts.vue'
 const props = defineProps({ initialContext: { type: Object, default: null } })
 const empty = () => ({ rows: [], total: 0, uploads: 0, employees: 0, available: 0, page: 1, counts: { failed: 0, unconfirmed: 0 } })

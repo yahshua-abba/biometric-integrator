@@ -146,10 +146,8 @@
         <label class="text-xs font-medium text-gray-500">Attendance date from<input v-model="filterDateFrom" type="date" class="input text-sm mt-1.5 text-gray-900" /></label>
         <label class="text-xs font-medium text-gray-500">Attendance date to<input v-model="filterDateTo" type="date" class="input text-sm mt-1.5 text-gray-900" /></label>
         <label class="text-xs font-medium text-gray-500">Employee<input v-model="searchQuery" type="search" placeholder="Search name or employee code" class="input text-sm mt-1.5 text-gray-900" /></label>
-        <label class="text-xs font-medium text-gray-500">Device<select v-model="filterDevice" class="input text-sm mt-1.5 text-gray-900"><option value="all">All devices</option><option v-for="device in devices" :key="device.id" :value="device.id">{{ device.name }}</option></select></label>
-        <label class="text-xs font-medium text-gray-500">Status<select v-model="filterStatus" class="input text-sm mt-1.5 text-gray-900">
-          <option value="all">All records</option><option value="synced">Synced</option><option value="duplicate">Duplicate skipped</option><option value="pending">Pending</option><option value="error">Failed / Unconfirmed</option><option value="excluded">Do Not Sync</option><option value="deleted">Deleted</option>
-        </select></label>
+        <div><span class="block text-xs font-medium text-gray-500">Device</span><AppSelect v-model="filterDevice" label="Device" :options="deviceOptions" class="mt-1.5" /></div>
+        <div><span class="block text-xs font-medium text-gray-500">Status</span><AppSelect v-model="filterStatus" label="Status" :options="statusOptions" class="mt-1.5" /></div>
       </div>
       <DateRangeShortcuts class="px-4 pb-3" @change="setRange" />
     </section>
@@ -395,6 +393,7 @@ import { useToast } from '../composables/useToast'
 import { showPushResultToasts } from '../utils/pushResultToast'
 import SyncProgressModal from './SyncProgressModal.vue'
 import TablePagination from './TablePagination.vue'
+import AppSelect from './AppSelect.vue'
 import DateRangeShortcuts from './DateRangeShortcuts.vue'
 
 const { success, error, info } = useToast()
@@ -405,6 +404,8 @@ const loading = ref(false)
 const searchQuery = ref('')
 const filterStatus = ref('all')
 const filterDevice = ref('all')
+const deviceOptions = computed(() => [{ value: 'all', label: 'All devices' }, ...devices.value.map(d => ({ value: d.id, label: d.name }))])
+const statusOptions = [{ value: 'all', label: 'All records' }, { value: 'synced', label: 'Synced' }, { value: 'duplicate', label: 'Duplicate skipped' }, { value: 'pending', label: 'Pending' }, { value: 'error', label: 'Failed / Unconfirmed' }, { value: 'excluded', label: 'Do Not Sync' }, { value: 'deleted', label: 'Deleted' }]
 const filterDateFrom = ref('')
 const filterDateTo = ref('')
 const currentPage = ref(1)
