@@ -1,6 +1,6 @@
 <template>
   <div class="p-6 space-y-6">
-    <h1 class="text-3xl font-bold text-gray-900">Dashboard</h1>
+    <h1 class="text-3xl font-bold text-gray-900">Overview</h1>
 
     <!-- Push Progress Modal -->
     <SyncProgressModal :show="showProgressModal" :configs="pushConfigs" />
@@ -133,17 +133,17 @@
           Push to Cloud Payroll
         </h2>
         <p class="text-gray-600 mb-4">
-          Sync timesheet data to cloud payroll system
+          Send attendance that has not been attempted for each Payroll destination
         </p>
         <div v-if="config" class="text-sm text-gray-500 mb-4">
           Last push: {{ formatDateTime(config.last_push_at) || 'Never' }}
         </div>
         <button
           @click="handlePushSync"
-          :disabled="pushLoading || (stats.pending + stats.errors) === 0"
+          :disabled="pushLoading || !stats.new_uploads"
           class="btn btn-success w-full"
         >
-          <span v-if="!pushLoading">Push Data Now</span>
+          <span v-if="!pushLoading">Send New Uploads ({{ stats.new_uploads || 0 }})</span>
           <span v-else class="flex items-center justify-center gap-2">
             <svg class="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -152,8 +152,11 @@
             Pushing...
           </span>
         </button>
+        <p class="text-sm text-gray-500 mt-3">{{ stats.new_uploads || 0 }} new uploads ready. Failed or unconfirmed uploads require review in <button class="text-primary-700 underline" @click="openRetryQueue">Needs Attention</button>.</p>
       </div>
     </div>
+
+    <p class="text-sm text-gray-500">Counts below are attendance records. Each record can have an upload to each configured Payroll destination.</p>
 
     <!-- Statistics -->
     <div class="grid grid-cols-2 lg:grid-cols-5 gap-4">
@@ -163,7 +166,7 @@
         <div class="text-xs text-gray-500 mt-1">Will not be uploaded again</div>
       </div>
       <div class="card">
-        <div class="text-sm text-gray-600 mb-1">Total Records</div>
+        <div class="text-sm text-gray-600 mb-1">Attendance records</div>
         <div class="text-3xl font-bold text-gray-900">{{ stats.total || 0 }}</div>
       </div>
       <div class="card">
@@ -175,7 +178,7 @@
         <div class="text-3xl font-bold text-yellow-600">{{ stats.pending || 0 }}</div>
       </div>
       <div class="card">
-        <button class="text-sm text-primary-700 underline mb-1" @click="openRetryQueue">Needs manual retry →</button>
+        <button class="text-sm text-primary-700 underline mb-1" @click="openRetryQueue">Needs attention →</button>
         <div class="text-3xl font-bold text-red-600">{{ stats.errors || 0 }}</div>
       </div>
     </div>
@@ -237,7 +240,8 @@ const stats = ref({
   total: 0,
   synced: 0,
   pending: 0,
-  errors: 0
+  errors: 0,
+  new_uploads: 0
 })
 
 const config = ref(null)
@@ -347,6 +351,7 @@ const executePullSync = async () => {
 }
 
 const handlePushSync = async () => {
+  if (pushLoading.value || !stats.value.new_uploads) return
   pushLoading.value = true
   showProgressModal.value = true
   // Reset progress (per-destination rows are populated as progress arrives)
