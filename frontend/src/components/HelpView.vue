@@ -499,7 +499,7 @@ const troubleshootingItems = [
         <li>Check your <strong>internet connection</strong>.</li>
         <li>Verify your <strong>login credentials</strong> in the Configuration page.</li>
         <li>Make sure <strong>employee IDs match</strong> between the Payroll System and the ZKTeco Device.</li>
-        <li>Retry sync using the <strong>Pull</strong> or <strong>Push</strong> button on the Dashboard.</li>
+        <li>Retry device downloads using <strong>Pull</strong>. For failed uploads, open <strong>Retry Queue</strong>, filter attendance dates and employees, then review and retry selected records.</li>
         <li>Restart the Integration App.</li>
       </ul>
     `
@@ -539,7 +539,7 @@ const faqItems = [
       <ul class="list-disc ml-5 mt-1 space-y-1">
         <li><strong>Synced</strong> (green) &mdash; Successfully pushed to the payroll system</li>
         <li><strong>Pending</strong> (yellow) &mdash; Pulled from device but not yet pushed to payroll</li>
-        <li><strong>Error</strong> (red) &mdash; Push failed. Check the error message for details. You can retry failed records from the Timesheets page.</li>
+        <li><strong>Error</strong> (red) &mdash; Push failed. Check the error message for details. Open Retry Queue to review and retry failed records. Unconfirmed uploads may already exist in Payroll; check them before retrying.</li>
       </ul>
     `
   },
@@ -573,6 +573,7 @@ const faqItems = [
       <p>There are two places to check:</p>
       <ul class="list-disc ml-5 mt-2 space-y-1">
         <li><strong>Logs page</strong> &mdash; Shows sync operation history (pull/push) with status, record counts, and error messages</li>
+        <li><strong>Retry Queue</strong> &mdash; Review failed and unconfirmed uploads, select a date range and employees, and retry selected destinations in bulk. Automatic push only sends records that have never been attempted.</li>
         <li><strong>Timesheets page</strong> &mdash; Filter by "Errors" status to see individual records that failed to sync, along with the specific error reason</li>
       </ul>
       <p class="mt-2">For deeper debugging, use <strong>System Logs</strong> in Configuration to view raw application log files.</p>

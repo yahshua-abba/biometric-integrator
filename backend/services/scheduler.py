@@ -158,12 +158,13 @@ class SyncScheduler:
             conn = self.database.get_connection()
             cursor = conn.cursor()
 
-            # Hard-delete all records (including soft-deleted) past the cutoff date.
-            # Soft-deleted records are only needed to block re-push; after 60 days
-            # the device no longer holds those logs anyway, so the protection is moot.
+            # Keep unresolved delivery attempts available for HR review. The
+            # separate delivery ledger also survives cleanup of resolved rows.
             cursor.execute("""
                 DELETE FROM timesheet
                 WHERE date < ?
+                AND NOT EXISTS (SELECT 1 FROM delivery_attempt a
+                    WHERE a.sync_id=timesheet.sync_id AND a.outcome != 'resolved')
             """, (cutoff_date,))
 
             deleted_count = cursor.rowcount

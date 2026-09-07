@@ -175,7 +175,7 @@
         <div class="text-3xl font-bold text-yellow-600">{{ stats.pending || 0 }}</div>
       </div>
       <div class="card">
-        <div class="text-sm text-gray-600 mb-1">Errors</div>
+        <button class="text-sm text-primary-700 underline mb-1" @click="openRetryQueue">Needs manual retry →</button>
         <div class="text-3xl font-bold text-red-600">{{ stats.errors || 0 }}</div>
       </div>
     </div>
@@ -224,6 +224,7 @@
 </template>
 
 <script setup>
+const openRetryQueue = () => window.dispatchEvent(new Event('openRetryQueue'))
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import bridgeService from '../services/bridge'
 import { useToast } from '../composables/useToast'

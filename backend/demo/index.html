@@ -37,6 +37,7 @@
   </style>
 </head>
 <body>
+<a href="/retry/" style="display:block;padding:16px;text-align:center;color:#145c4b;font-weight:600">Open the interactive Retry Queue demo →</a>
 <main>
   <div class="top"><div class="brand">Biometric Integration <span class="eyebrow"> / test lab</span></div><span class="local">Local only · synthetic data</span></div>
   <header>
@@ -55,7 +56,7 @@
   <div class="columns" id="lanes"></div>
   <footer>
     <div><strong>What this demonstrates</strong><br>Both configurations intentionally reach the same mini Payroll. The old lane keeps a duplicate rejection pending. The fixed lane saves a saved, per-destination “Duplicate skipped” state.</div>
-    <div><strong>What runs here</strong><br>The app’s Python PushService, temporary SQLite databases, and a local HTTP Payroll API. The old lane overrides only duplicate classification. This simulates deletion; it does not connect to or verify production Payroll.</div>
+    <div><strong>What runs here</strong><br>The app’s Python PushService, temporary SQLite databases, and a local HTTP Payroll API. The old lane disables duplicate suppression and restores automatic retries. This simulates deletion; it does not connect to or verify production Payroll.</div>
   </footer>
 </main>
 <script>

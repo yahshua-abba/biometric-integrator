@@ -62,3 +62,32 @@ def test_demo_rejects_cross_origin_commands_and_missing_payroll_token(mini_payro
     assert response.status_code == 403
     response = requests.post(mini_payroll + '/payroll/after/api/sync-time-in-out/', json={}, timeout=10)
     assert response.status_code == 401
+
+
+def retry_api(base, method, payload=None):
+    return requests.post(base + '/retry-api', json={'method': method, 'payload': payload}, timeout=10)
+
+
+def test_real_retry_queue_filters_manual_delivery_and_lost_acknowledgement(mini_payroll):
+    retry_api(mini_payroll, 'sync').raise_for_status()
+    queue = retry_api(mini_payroll, 'getRetryQueue', {}).json()['data']
+    assert len(queue) == 6
+    assert len([r for r in queue if r['state'] == 'unconfirmed']) == 2
+    retry_api(mini_payroll, 'fix').raise_for_status()
+    retry_api(mini_payroll, 'sync').raise_for_status()
+    snapshot = requests.get(mini_payroll + '/retry-state', timeout=10).json()
+    assert snapshot['requests'] == 2 and len(snapshot['payroll']) == 1
+    mara = next(r for r in queue if r['employee_code'] == '4472')
+    filters = {'date_from': '2026-08-24', 'date_to': '2026-08-24', 'employee_ids': [mara['employee_id']]}
+    selected = retry_api(mini_payroll, 'getRetryQueue', filters).json()['data']
+    assert len(selected) == 2
+    result = retry_api(mini_payroll, 'retryTimesheets', {'filters': filters, 'items': [{'id': r['id'], 'slot': r['slot']} for r in selected]})
+    result.raise_for_status()
+    remaining = retry_api(mini_payroll, 'getRetryQueue', {}).json()['data']
+    assert len(remaining) == 4 and all(r['employee_code'] != '4472' for r in remaining)
+    ana = next(r for r in remaining if r['employee_code'] == '9930')
+    assert retry_api(mini_payroll, 'retryTimesheets', {'items': [{'id': ana['id'], 'slot': ana['slot']}]}).status_code == 400
+    retry_api(mini_payroll, 'delete').raise_for_status()
+    retry_api(mini_payroll, 'sync').raise_for_status()
+    snapshot = requests.get(mini_payroll + '/retry-state', timeout=10).json()
+    assert snapshot['requests'] == 4 and not snapshot['payroll']
