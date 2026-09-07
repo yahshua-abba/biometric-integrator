@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Attendance replay · Mini Payroll</title>
+  <style>
+    :root{font-family:'Helvetica Neue',Arial,sans-serif;color:#2f3437;background:#f7f6f3;font-size:15px;line-height:1.5}
+    *{box-sizing:border-box}body{margin:0}main{max-width:1360px;margin:auto;padding:32px 40px 60px}
+    .top{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #deddd8;padding-bottom:18px}
+    .brand{font-weight:650;letter-spacing:-.02em}.eyebrow{font:11px monospace;letter-spacing:.12em;text-transform:uppercase;color:#787774}
+    .local{color:#346538;background:#edf3ec;padding:5px 10px;border-radius:4px;font-size:12px}
+    header{padding:35px 0 26px;display:flex;justify-content:space-between;gap:32px;align-items:end}
+    h1{font-family:Georgia,serif;font-weight:400;font-size:48px;line-height:1.08;letter-spacing:-.04em;margin:10px 0 16px;max-width:670px}
+    p{margin:0;color:#787774;max-width:740px}.intro{font-size:16px}.live{text-align:right;min-width:185px;font-size:13px}
+    .live strong{display:block;color:#2f3437;font-size:20px;font-weight:500}.live span{color:#787774}
+    .controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:white;border:1px solid #eaeaea;border-radius:8px;padding:16px;margin-bottom:20px}
+    button{font:inherit;cursor:pointer;border:1px solid #deddd8;border-radius:5px;padding:10px 14px;background:#fff;color:#2f3437;transition:background .15s,transform .15s}
+    button:hover{background:#f7f6f3}button:active{transform:scale(.98)}button:focus-visible{outline:3px solid #1f6c9f;outline-offset:3px}button:disabled{opacity:.45;cursor:default}
+    button.primary{background:#111;color:#fff;border-color:#111}button.primary:hover{background:#333}
+    button.danger{color:#9f2f2d}.number{font:12px monospace;margin-right:8px;opacity:.65}.spacer{flex:1}
+    .notice{padding:14px 18px;margin-bottom:20px;background:#e1f3fe;color:#1f6c9f;border-radius:6px;min-height:50px}
+    .columns{display:grid;grid-template-columns:1fr 1fr;gap:20px}.lane{background:#fff;border:1px solid #eaeaea;border-radius:8px;overflow:hidden}
+    .lanehead{padding:22px 24px;border-bottom:1px solid #eaeaea;display:flex;align-items:center;justify-content:space-between}
+    h2{margin:0;font-size:22px;font-weight:500;letter-spacing:-.025em}h3{font-size:13px;margin:0;text-transform:uppercase;letter-spacing:.06em;font-weight:500}
+    .tag{font:11px monospace;text-transform:uppercase;letter-spacing:.05em;padding:5px 8px;background:#fbf3db;color:#956400;border-radius:4px}
+    .tag.good{background:#edf3ec;color:#346538}.tag.bad{background:#fdebec;color:#9f2f2d}
+    section.inner{padding:20px 24px;border-bottom:1px solid #eaeaea}.section-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}.muted{color:#787774;font-size:12px}
+    .slot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0}.slot+.slot{border-top:1px solid #f2f1ef}.slot span:first-child{font-size:14px}
+    .key{font:11px monospace;color:#787774;margin-top:12px;overflow-wrap:anywhere}
+    .punch{display:grid;grid-template-columns:1fr auto;gap:12px;background:#f7f6f3;padding:16px;border-radius:5px;min-height:85px}.punch strong{font-size:17px;font-weight:500}.punch small{display:block;color:#787774;font-size:12px;margin-top:4px}.time{text-align:right;font:20px monospace}
+    .empty{display:flex;align-items:center;justify-content:center;flex-direction:column;min-height:85px;border:1px dashed #deddd8;border-radius:5px;color:#787774}.empty strong{color:#346538;font-size:15px;font-weight:500}
+    .events{height:220px;overflow:auto;padding-right:8px}.event{display:grid;grid-template-columns:63px 1fr;gap:12px;padding:10px 0;border-bottom:1px solid #f2f1ef;font-size:12px}.event time{font:11px monospace;color:#787774;padding-top:3px}.event strong{display:block;font-weight:500}.event p{font-size:11px;overflow-wrap:anywhere;margin-top:3px}
+    footer{margin-top:22px;display:flex;gap:32px;font-size:12px;color:#787774}footer div{flex:1}footer strong{color:#2f3437;font-weight:500}
+    #error{color:#9f2f2d;margin:0 0 12px} .hidden{display:none}
+    @media(max-width:800px){main{padding:20px}header{display:block}h1{font-size:38px}.live{text-align:left;margin-top:20px}.columns{grid-template-columns:1fr}.spacer{display:none}footer{display:block}footer div{margin-bottom:15px}}
+    @media(prefers-reduced-motion:reduce){button{transition:none}}
+  </style>
+</head>
+<body>
+<main>
+  <div class="top"><div class="brand">Biometric Integration <span class="eyebrow"> / test lab</span></div><span class="local">Local only · synthetic data</span></div>
+  <header>
+    <div><div class="eyebrow">Mini Payroll / deletion &amp; retry</div><h1>A deleted punch should<br>stay deleted.</h1><p class="intro">One tap. Two upload configurations. Compare the old retry behavior with the fixed app using real requests to a local Payroll server.</p></div>
+    <div class="live"><strong id="live-title">Manual walkthrough</strong><span id="live-detail">You control each sync.</span></div>
+  </header>
+  <div class="controls" aria-label="Demo controls">
+    <button class="primary" id="sync" data-action="sync"><span class="number">01</span>Sync now</button>
+    <button class="danger" id="delete" data-action="delete"><span class="number">02</span>Approve deletion in Payroll</button>
+    <span class="spacer"></span>
+    <button id="auto" data-action="auto" aria-pressed="false">Start auto sync · every 5s</button>
+    <button data-action="reset">Reset demo</button>
+  </div>
+  <div id="error" role="alert" class="hidden"></div>
+  <div class="notice" id="guidance" role="status" aria-live="polite">Step 1 · Click Sync now. Both Payroll copies receive the same synthetic punch.</div>
+  <div class="columns" id="lanes"></div>
+  <footer>
+    <div><strong>What this demonstrates</strong><br>Both configurations intentionally reach the same mini Payroll. The old lane keeps a duplicate rejection pending. The fixed lane saves a saved, per-destination “Duplicate skipped” state.</div>
+    <div><strong>What runs here</strong><br>The app’s Python PushService, temporary SQLite databases, and a local HTTP Payroll API. The old lane overrides only duplicate classification. This simulates deletion; it does not connect to or verify production Payroll.</div>
+  </footer>
+</main>
+<script>
+  let busy=false, lastState=null;
+  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  function laneMarkup(lane){
+    const fixed=lane.mode==='after',returned=lane.deleted&&lane.payroll.length>0,stayed=lane.deleted&&!lane.payroll.length;
+    const verdict=returned?'Punch returned':stayed?'Payroll is empty':fixed?'Fixed behavior':'Old behavior';
+    const tag=returned?'bad':fixed?'good':'';
+    return `<article class="lane" data-lane="${lane.mode}">
+      <div class="lanehead"><h2>${fixed?'After the fix':'Before the fix'}</h2><span class="tag ${tag}">${verdict}</span></div>
+      <section class="inner"><div class="section-title"><h3>Biometric app</h3><span class="muted">1 local attendance record</span></div>
+      ${lane.slots.map(s=>`<div class="slot"><span>Payroll ${s.slot}</span><span title="${esc(s.reason)}" class="tag ${s.status==='Retry queued'?'bad':s.status==='Pending'?'':'good'}">${esc(s.status)}</span></div>`).join('')}
+      <div class="key">${esc(lane.sync_id)}</div></section>
+      <section class="inner"><div class="section-title"><h3>Mini Payroll</h3><span class="muted">${lane.payroll.length} saved · ${lane.requests} upload requests</span></div>
+      ${lane.payroll.length?lane.payroll.map(p=>`<div class="punch"><div><strong>Mara Santos <span class="muted">4472</span></strong><small>August 24, 2026 · Synthetic attendance</small></div><div class="time">6:52 PM<small>${esc(p.log_type)}</small></div></div>`).join(''):`<div class="empty"><strong>${stayed?'Deleted from Payroll':'No attendance yet'}</strong><span class="muted">${stayed?'Watch what the next sync does.':'Waiting for the first upload.'}</span></div>`}</section>
+      <section class="inner"><div class="section-title"><h3>Live request history</h3><span class="muted">Newest first</span></div><div class="events">${lane.events.map(e=>`<div class="event"><time>${esc(e.time)}</time><div><strong>${esc(e.event)}</strong><p>${esc(e.detail)}</p></div></div>`).join('')}</div></section>
+    </article>`;
+  }
+  function render(state){
+    lastState=state;
+    document.querySelector('#lanes').innerHTML=state.lanes.map(laneMarkup).join('');
+    document.querySelector('#live-title').textContent=state.automatic?'Auto sync is running':'Manual walkthrough';
+    document.querySelector('#live-detail').textContent=state.automatic?`Next sync in ${Math.ceil(state.countdown)} seconds`:'You control each sync.';
+    const auto=document.querySelector('#auto');auto.textContent=state.automatic?'Pause auto sync':'Start auto sync · every 5s';auto.setAttribute('aria-pressed',String(state.automatic));
+    document.querySelector('#delete').disabled=busy||!state.lanes.some(l=>l.payroll.length);
+    const [old,fixed]=state.lanes;
+    let guidance='Step 1 · Click Sync now. Both Payroll copies receive the same synthetic punch.';
+    if(old.requests) guidance='Step 2 · Approve deletion in Payroll. Notice that the old app still has a retry queued.';
+    if(old.deleted&&!old.payroll.length) guidance='Step 3 · Click Sync now again, or start auto sync. Watch whether the deleted punch returns.';
+    if(old.deleted&&old.payroll.length&&!fixed.payroll.length) guidance='Result · The old app recreated the deleted punch. The fixed app made no new upload for the skipped duplicate.';
+    document.querySelector('#guidance').textContent=guidance;
+  }
+  async function refresh(){if(busy)return;try{const r=await fetch('/state');if(!r.ok)throw Error('Demo server unavailable');render(await r.json());document.querySelector('#error').classList.add('hidden')}catch(e){showError(e)}}
+  function showError(e){const el=document.querySelector('#error');el.textContent=e.message;el.classList.remove('hidden')}
+  document.querySelectorAll('[data-action]').forEach(button=>button.addEventListener('click',async()=>{
+    busy=true;document.querySelectorAll('button').forEach(b=>b.disabled=true);
+    try{const r=await fetch('/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:button.dataset.action})});const data=await r.json();if(!r.ok)throw Error(data.error||'Action failed');render(data)}catch(e){showError(e)}finally{busy=false;document.querySelectorAll('button').forEach(b=>b.disabled=false);if(lastState)render(lastState)}
+  }));
+  refresh();setInterval(refresh,1000);
+</script>
+</body>
+</html>
