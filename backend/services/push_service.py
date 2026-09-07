@@ -217,7 +217,7 @@ class PushService:
     def _is_duplicate_error(self, error_code, reason):
         return is_duplicate_error(error_code, reason)
 
-    def push_data(self, progress_callback=None, timesheet_ids=None):
+    def push_data(self, progress_callback=None, timesheet_ids=None, manual_retry=False):
         """Serialize manual and scheduled uploads sharing this destination service."""
         if not self._push_lock.acquire(blocking=False):
             return False, f'{self.label}: a sync is already running', {
@@ -225,11 +225,11 @@ class PushService:
                 'duplicates': 0, 'batches_completed': 0, 'batches_total': 0, 'reasons': {}
             }
         try:
-            return self._push_data(progress_callback, timesheet_ids)
+            return self._push_data(progress_callback, timesheet_ids, manual_retry)
         finally:
             self._push_lock.release()
 
-    def _push_data(self, progress_callback=None, timesheet_ids=None):
+    def _push_data(self, progress_callback=None, timesheet_ids=None, manual_retry=False):
         """
         Push unsynced timesheet data to YAHSHUA Payroll in batches of 50
 
@@ -237,7 +237,9 @@ class PushService:
             progress_callback: Optional callback function for progress updates.
                               Called with dict: {batch_current, batch_total, batch_size, success, failed}
             timesheet_ids: Optional list of timesheet IDs to push. When provided,
-                           only records with these IDs (and still unsynced) are pushed.
+                           only eligible records with these IDs are pushed.
+            manual_retry: Explicit HR retry of previously attempted records; never
+                          enabled by ordinary scheduled or dashboard sync.
 
         Returns:
             tuple: (success: bool, message: str, stats: dict)
@@ -261,12 +263,12 @@ class PushService:
             scope = f"selected ({len(timesheet_ids)} records)" if timesheet_ids else "all unsynced"
             logger.info(f"Starting push sync to YAHSHUA Payroll: {scope}")
 
-            # Get token
-            token = self.get_valid_token()
+            if manual_retry and not timesheet_ids:
+                raise ValueError('Manual retry requires selected records')
 
             # Get unsynced timesheets (filtered by ids if provided) for this slot
             if timesheet_ids:
-                all_unsynced = self.database.get_unsynced_timesheets_by_ids(timesheet_ids, slot=self.slot)
+                all_unsynced = self.database.get_unsynced_timesheets_by_ids(timesheet_ids, slot=self.slot, manual_retry=manual_retry)
             else:
                 all_unsynced = self.database.get_unsynced_timesheets(limit=10000, slot=self.slot)
             logger.info(f"Found {len(all_unsynced)} unsynced timesheet records")
@@ -279,9 +281,10 @@ class PushService:
                 )
                 return True, message, stats
 
+            token = self.get_valid_token()
+
             # Build log_list for all valid records
             all_log_entries = []
-            timesheet_map = {}  # Map local ID to timesheet data
 
             for timesheet in all_unsynced:
                 stats['processed'] += 1
@@ -309,7 +312,6 @@ class PushService:
                     log_entry["branch_id"] = branch_id
 
                 all_log_entries.append(log_entry)
-                timesheet_map[timesheet['id']] = timesheet
 
             if len(all_log_entries) == 0:
                 message = "No valid records to sync"
@@ -343,36 +345,45 @@ class PushService:
                         'failed': stats['failed']
                     })
 
+                # Persist attempts BEFORE network I/O; overlapping services cannot resend.
+                claimed = self.database.claim_delivery([r['id'] for r in batch], self.slot, manual_retry)
+                batch = [r for r in batch if r['id'] in claimed]
+                if not batch:
+                    continue
                 # Push batch to YAHSHUA
                 success, result = self.push_batch(token, batch)
 
                 if success:
-                    # Process results for this batch
+                    # Accept acknowledgements only for IDs in this exact batch.
                     logs_synced = result.get('logs_successfully_sync', [])
                     logs_failed = result.get('logs_not_sync', [])
-
-                    # Mark successful logs
-                    for local_id in logs_synced:
-                        self.database.mark_timesheet_synced(local_id, local_id, slot=self.slot)
-                        stats['success'] += 1
-                        logger.info(f"Timesheet {local_id} synced successfully")
-
-                    # Mark failed logs with reason (individual record failures)
-                    for failed_log in logs_failed:
-                        local_id = failed_log.get('id')
-                        reason = failed_log.get('reason', 'Unknown error')
-                        error_code = failed_log.get('error_code', 0)
-
-                        friendly_msg = get_friendly_yahshua_error(error_code, reason)
-                        if self._is_duplicate_error(error_code, reason):
-                            self.database.mark_timesheet_duplicate(local_id, friendly_msg, slot=self.slot)
-                            stats['duplicates'] += 1
-                            logger.info(f"{self.label}: timesheet {local_id} duplicate skipped for this destination: {friendly_msg}")
+                    if not isinstance(logs_synced, list):
+                        logs_synced = []
+                    if not isinstance(logs_failed, list):
+                        logs_failed = []
+                    for entry in batch:
+                        local_id = entry['id']
+                        successes = [i for i in logs_synced if type(i) is int and i == local_id]
+                        failures = [r for r in logs_failed if isinstance(r, dict)
+                                    and type(r.get('id')) is int and r['id'] == local_id]
+                        if successes and not failures:
+                            self.database.mark_timesheet_synced(local_id, local_id, slot=self.slot)
+                            stats['success'] += 1
                             continue
-                        self.database.mark_timesheet_sync_failed(local_id, friendly_msg, slot=self.slot)
+                        if len(failures) == 1 and not successes:
+                            failed = failures[0]
+                            code, reason = failed.get('error_code', 0), failed.get('reason', 'Unknown error')
+                            friendly = get_friendly_yahshua_error(code, reason)
+                            if self._is_duplicate_error(code, reason):
+                                self.database.mark_timesheet_duplicate(local_id, friendly, slot=self.slot)
+                                stats['duplicates'] += 1
+                                continue
+                            self.database.mark_timesheet_sync_failed(local_id, friendly, slot=self.slot)
+                        else:
+                            friendly = 'Unconfirmed — Payroll did not return a clear result for this record. Check Payroll before retrying.'
+                            self.database.mark_timesheet_sync_failed(local_id, friendly, slot=self.slot, unconfirmed=True)
                         stats['failed'] += 1
-                        stats['reasons'][friendly_msg] = stats['reasons'].get(friendly_msg, 0) + 1
-                        logger.warning(f"Timesheet {local_id} failed (code {error_code}): {reason} -> {friendly_msg}")
+                        stats['reasons'][friendly] = stats['reasons'].get(friendly, 0) + 1
 
                     stats['batches_completed'] += 1
                     logger.info(f"Batch {batch_num} completed: {len(logs_synced)} synced, {len(logs_failed)} failed")
@@ -387,7 +398,8 @@ class PushService:
                         self.database.mark_timesheet_sync_failed(
                             log_entry['id'],
                             batch_error,
-                            slot=self.slot
+                            slot=self.slot,
+                            unconfirmed=result.get('unconfirmed', True)
                         )
                         stats['failed'] += 1
                     stats['reasons'][batch_error] = stats['reasons'].get(batch_error, 0) + len(batch)
@@ -476,7 +488,8 @@ class PushService:
                 sync_url,
                 headers=headers,
                 json=payload,
-                timeout=60
+                timeout=60,
+                allow_redirects=False
             )
 
             data = response.json()
@@ -490,32 +503,17 @@ class PushService:
                 # Bad request - check for partial success
                 if data.get('logs_successfully_sync') or data.get('logs_not_sync'):
                     return True, data
-                return False, {'error': data.get('message', 'Bad request')}
+                return False, {'error': data.get('message', 'Bad request'), 'unconfirmed': False}
 
             elif response.status_code == 401:
-                # Token expired, try to re-authenticate
-                logger.warning(f"Token expired ({self.label}), re-authenticating...")
+                # Prepare authentication for the next explicit attempt, never resend here.
                 self.database.update_push_token(None, slot=self.slot)
-                auth_result = self.authenticate()
-                # Retry once with new token
-                headers['Authorization'] = f'Token {auth_result["token"]}'
-                retry_response = self.session.post(
-                    sync_url,
-                    headers=headers,
-                    json=payload,
-                    timeout=60
-                )
-                retry_data = retry_response.json()
-                if retry_response.status_code == 200 or (retry_response.status_code == 400 and (retry_data.get('logs_successfully_sync') or retry_data.get('logs_not_sync'))):
-                    return True, retry_data
-                friendly = get_friendly_http_error(retry_response.status_code)
-                logger.error(f"Retry after re-auth failed: HTTP {retry_response.status_code}")
-                return False, {'error': f'Authentication failed after retry: {friendly}'}
+                return False, {'error': get_friendly_http_error(401), 'unconfirmed': False}
 
             else:
                 friendly = get_friendly_http_error(response.status_code)
                 logger.error(f"Push batch failed: HTTP {response.status_code} - {response.text[:200]}")
-                return False, {'error': friendly}
+                return False, {'error': friendly, 'unconfirmed': not (400 <= response.status_code < 500) or response.status_code == 408}
 
         except requests.exceptions.Timeout:
             return False, {'error': 'Request timed out - the payroll server took too long to respond'}

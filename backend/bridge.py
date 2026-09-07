@@ -105,26 +105,24 @@ class Bridge(QObject):
 
     @pyqtSlot(int, result=str)
     def retryFailedTimesheet(self, timesheet_id):
-        """Retry syncing a failed timesheet.
+        return json.dumps({'success': False, 'error': 'Use Retry Queue to review and retry each Payroll destination.'})
 
-        Clears the error message for both destinations so the record re-enters the
-        push queue of whichever destination(s) it has not yet synced to.
-        """
+    @pyqtSlot(str, result=str)
+    def getRetryQueue(self, filters_json):
         try:
-            conn = self.database.get_connection()
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE timesheet
-                SET sync_error_message = NULL,
-                    sync_error_message_2 = NULL
-                WHERE id = ?
-            """, (timesheet_id,))
-            conn.commit()
-            conn.close()
-            return json.dumps({"success": True})
-        except Exception as e:
-            logger.error(f"Error retrying timesheet: {e}")
-            return json.dumps({"success": False, "error": str(e)})
+            rows = self.database.get_retry_queue(json.loads(filters_json))
+            return json.dumps({'success': True, 'data': rows})
+        except Exception as exc:
+            return json.dumps({'success': False, 'error': str(exc)})
+
+    @pyqtSlot(str, result=str)
+    def retryTimesheets(self, payload_json):
+        try:
+            payload = json.loads(payload_json)
+            retry_slots = self.database.validate_retry_selection(payload)
+            return self._start_push_sync(retry_slots={slot: list(ids) for slot, ids in retry_slots.items()})
+        except Exception as exc:
+            return json.dumps({'success': False, 'error': str(exc)})
 
     @pyqtSlot(str, str, bool, result=str)
     def clearTimesheets(self, date_from, date_to, only_synced=True):
@@ -366,7 +364,7 @@ class Bridge(QObject):
 
         return self._start_push_sync(timesheet_ids=ids)
 
-    def _start_push_sync(self, timesheet_ids=None):
+    def _start_push_sync(self, timesheet_ids=None, retry_slots=None):
         """Shared implementation: push to every active destination simultaneously.
 
         Each enabled push slot runs in its own thread with its own token/session
@@ -376,6 +374,10 @@ class Bridge(QObject):
         """
         scope = f"{len(timesheet_ids)} selected records" if timesheet_ids else "all unsynced"
         services = self._active_push_services()
+        if retry_slots is not None:
+            services = [svc for svc in services if svc.slot in retry_slots]
+            if len(services) != len(retry_slots):
+                return json.dumps({"success": False, "error": "A selected Payroll destination is not configured"})
         logger.info(f"Manual push sync triggered from UI: {scope} -> {[s.label for s in services]}")
 
         def run_all():
@@ -393,7 +395,8 @@ class Bridge(QObject):
 
                     success, message, stats = svc.push_data(
                         progress_callback=on_progress,
-                        timesheet_ids=timesheet_ids
+                        timesheet_ids=retry_slots[svc.slot] if retry_slots is not None else timesheet_ids,
+                        manual_retry=retry_slots is not None
                     )
                     with lock:
                         results[svc.slot] = {
@@ -431,6 +434,7 @@ class Bridge(QObject):
 
             self.syncCompleted.emit(json.dumps({
                 "type": "push",
+                "manual_retry": retry_slots is not None,
                 "result": {
                     "success": overall_success,
                     "message": combined_message,

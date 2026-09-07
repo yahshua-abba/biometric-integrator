@@ -62,14 +62,17 @@ def test_duplicate_cannot_return_after_payroll_deletion_or_app_restart(seeded, s
 
 
 @pytest.mark.parametrize('slot', [1, 2])
-def test_normal_failure_stays_retriable(seeded, slot):
+def test_normal_failure_requires_explicit_manual_retry(seeded, slot):
     db, row = seeded
     svc = service(db, slot)
     svc.session.post = Mock(return_value=reply(400, failed=[{'id': row, 'error_code': 140, 'reason': 'Employee not found'}]))
     assert svc.push_data()[2]['failed'] == 1
-    assert len(db.get_unsynced_timesheets(slot=slot)) == 1
+    assert not db.get_unsynced_timesheets(slot=slot)
+    assert db.get_retry_queue()[0]["state"] == "failed"
+    svc.push_data()
+    assert svc.session.post.call_count == 1
     svc.session.post.return_value = reply(200, [row])
-    assert svc.push_data()[2]['success'] == 1
+    assert svc.push_data(timesheet_ids=[row], manual_retry=True)[2]['success'] == 1
     assert not db.get_unsynced_timesheets(slot=slot)
 
 
@@ -79,13 +82,15 @@ def test_unrelated_errors_are_not_discarded(reason):
 
 
 @pytest.mark.parametrize('slot', [1, 2])
-def test_auth_retry_preserves_http400_partial_success(seeded, slot):
+def test_401_waits_for_manual_retry_before_partial_success(seeded, slot):
     db, row = seeded
     svc = service(db, slot)
-    svc.authenticate = Mock(return_value={'token': 'fresh'})
     svc.session.post = Mock(side_effect=[reply(401), reply(400, [row])])
-    assert svc.push_data()[2]['success'] == 1
-    assert not db.get_unsynced_timesheets(slot=slot)
+    assert svc.push_data()[2]['failed'] == 1
+    svc.push_data()
+    assert svc.session.post.call_count == 1
+    assert svc.push_data(timesheet_ids=[row], manual_retry=True)[2]['success'] == 1
+    assert not db.get_retry_queue()
 
 
 @pytest.mark.parametrize('reason', ['Duplicate record already exists', 'Time in range (5mins)'])
@@ -103,7 +108,8 @@ def test_upgrade_keeps_unknown_errors_and_existing_success(seeded):
     db.mark_timesheet_sync_failed(row, 'Bad request', 1)
     db.mark_timesheet_synced(row, 99, 2)
     upgraded = Database(str(db.db_path))
-    assert upgraded.get_unsynced_timesheets(slot=1)
+    assert not upgraded.get_unsynced_timesheets(slot=1)
+    assert upgraded.get_retry_queue()[0]["state"] == "unconfirmed"
     assert upgraded.get_all_timesheets()[0]['backend_timesheet_id_2'] == 99
 
 

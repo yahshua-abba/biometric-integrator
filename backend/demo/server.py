@@ -9,6 +9,7 @@ This is a test contract, not a claim about the actual Payroll deletion API.
 import argparse
 import json
 import logging
+import mimetypes
 import sys
 import tempfile
 import threading
@@ -25,6 +26,14 @@ from services.push_service import PushService
 
 class LegacyPushService(PushService):
     """Reproduce the old retry decision, isolated from the shipping application."""
+
+    def _push_data(self, progress_callback=None, timesheet_ids=None, manual_retry=False):
+        # Demo-only reproduction of the old automatic retry policy.
+        conn = self.database.get_connection()
+        with conn:
+            conn.execute("DELETE FROM delivery_attempt WHERE slot=? AND outcome != 'resolved'", (self.slot,))
+        conn.close()
+        return super()._push_data(progress_callback, timesheet_ids, manual_retry)
 
     def _is_duplicate_error(self, error_code, reason):
         return False
@@ -103,6 +112,44 @@ class Lane:
                     'sync_id': self.sync_id}
 
 
+class RetryLane(Lane):
+    """Synthetic failures and lost acknowledgements for the real Retry Queue UI."""
+    def __init__(self, directory, base_url):
+        super().__init__('retry', directory, base_url)
+        self.mapping_fixed = False
+        self.db.add_or_update_employee('8821', 'Luis Cruz (demo)', '8821')
+        employee = self.db.get_employee_by_code('8821')['id']
+        self.db.add_timesheet_entry('ZK_RETRY_8821_20260825', employee, 'in', '2026-08-25', '08:00')
+        self.db.add_or_update_employee('9930', 'Ana Reyes (demo)', '9930')
+        employee = self.db.get_employee_by_code('9930')['id']
+        self.db.add_timesheet_entry('ZK_RETRY_9930_20260824', employee, 'out', '2026-08-24', '17:00')
+
+    def receive(self, rows):
+        if self.mapping_fixed:
+            return super().receive(rows)
+        success, failed = [], []
+        with self.lock:
+            self.requests += 1
+            for row in rows:
+                if row['employee'] == '9930':
+                    self.payroll[row['sync_id']] = dict(row)
+                    # Simulate accepted upload whose per-record acknowledgement is lost.
+                    self.record('Saved without confirmation', 'Ana’s punch exists in mini Payroll but its acknowledgement is missing.')
+                else:
+                    failed.append({'id': row['id'], 'error_code': 140, 'reason': 'Employee not found in Payroll'})
+                    self.record('Employee rejected', f"{row['employee']} needs the mini Payroll mapping corrected.")
+        return 200, {'logs_successfully_sync': success, 'logs_not_sync': failed}
+
+    def retry(self, payload):
+        scopes = self.db.validate_retry_selection(payload)
+        messages = []
+        for svc in self.services:
+            if svc.slot in scopes:
+                _, message, _ = svc.push_data(timesheet_ids=list(scopes[svc.slot]), manual_retry=True)
+                messages.append(message)
+        return {'success': True, 'message': ' | '.join(messages)}
+
+
 class Demo:
     def __init__(self, base_url):
         self.base_url = base_url
@@ -112,6 +159,7 @@ class Demo:
         self.next_sync = None
         self.directory = None
         self.lanes = {}
+        self.retry_lane = None
         self.reset()
         self.thread = threading.Thread(target=self._auto_loop, daemon=True)
         self.thread.start()
@@ -120,13 +168,14 @@ class Demo:
         with self.control_lock:
             self.automatic = False
             self.next_sync = None
-            for lane in self.lanes.values():
+            for lane in [*self.lanes.values(), *([self.retry_lane] if self.retry_lane else [])]:
                 for service in lane.services:
                     service.session.close()
             if self.directory:
                 self.directory.cleanup()
             self.directory = tempfile.TemporaryDirectory(prefix='biometric-demo-')
             self.lanes = {mode: Lane(mode, Path(self.directory.name), self.base_url) for mode in ('before', 'after')}
+            self.retry_lane = RetryLane(Path(self.directory.name), self.base_url)
 
     def action(self, action):
         with self.control_lock:
@@ -160,7 +209,7 @@ class Demo:
     def close(self):
         self.stop.set()
         self.thread.join(timeout=10)
-        for lane in self.lanes.values():
+        for lane in [*self.lanes.values(), self.retry_lane]:
             for service in lane.services:
                 service.session.close()
         self.directory.cleanup()
@@ -183,6 +232,24 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == '/state':
             self.send_json(200, self.server.demo.snapshot())
+        elif path == '/retry-state':
+            lane = self.server.demo.retry_lane
+            state = lane.snapshot()
+            state['mapping_fixed'] = lane.mapping_fixed
+            self.send_json(200, state)
+        elif path == '/retry' or path.startswith('/retry/'):
+            relative = path.removeprefix('/retry').lstrip('/') or 'retry-demo.html'
+            root = Path(__file__).resolve().parents[2] / 'frontend' / 'dist-demo'
+            target = (root / relative).resolve()
+            if not target.is_relative_to(root.resolve()) or not target.is_file():
+                self.send_json(404, {'error': 'Build the demo frontend first: cd frontend && npm run build:demo'})
+                return
+            body = target.read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', mimetypes.guess_type(str(target))[0] or 'application/octet-stream')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif path == '/':
             body = Path(__file__).with_name('index.html').read_bytes()
             self.send_response(200)
@@ -204,11 +271,35 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('Request too large')
             data = json.loads(self.rfile.read(size) or b'{}')
             path = urlparse(self.path).path
+            if path == '/retry-api':
+                with self.server.demo.control_lock:
+                    lane = self.server.demo.retry_lane
+                    method = data.get('method')
+                    if method == 'getRetryQueue':
+                        result = {'data': lane.db.get_retry_queue(data.get('payload'))}
+                    elif method == 'retryTimesheets':
+                        result = lane.retry(data['payload'])
+                    elif method == 'sync':
+                        lane.sync()
+                        result = {'message': 'Ordinary sync complete. Previously attempted records were not resent.'}
+                    elif method == 'fix':
+                        lane.mapping_fixed = True
+                        result = {'message': 'Mini Payroll employee mappings corrected. Select records in the queue to retry.'}
+                    elif method == 'delete':
+                        lane.delete()
+                        result = {'message': 'Mini Payroll records deleted. Ordinary sync will not restore them.'}
+                    elif method == 'reset':
+                        self.server.demo.reset()
+                        result = {'message': 'Demo reset. Run ordinary sync to seed the queue.'}
+                    else:
+                        raise ValueError('Unknown demo method')
+                    self.send_json(200, {'success': True, **result})
+                return
             if path == '/action':
                 self.server.demo.action(data.get('action'))
                 self.send_json(200, self.server.demo.snapshot())
                 return
-            for mode, lane in self.server.demo.lanes.items():
+            for mode, lane in {**self.server.demo.lanes, "retry": self.server.demo.retry_lane}.items():
                 base = f'/payroll/{mode}/api'
                 if path == base + '/api-auth/':
                     if data.get('username') != 'demo' or data.get('password') != 'demo':

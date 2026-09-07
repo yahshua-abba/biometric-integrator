@@ -45,3 +45,6 @@ jobs:
 
       - name: Run frontend tests
         run: cd frontend && npm test
+
+      - name: Build desktop frontend and local demo
+        run: cd frontend && npm run build && npm run build:demo

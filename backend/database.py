@@ -381,6 +381,22 @@ class Database:
                                 WHERE id = ?
                             """, (reason, row_id))
 
+            # Keep delivery history independently of attendance cleanup/re-pulls.
+            cursor.execute("""CREATE TABLE IF NOT EXISTS delivery_attempt (
+                sync_id TEXT NOT NULL, slot INTEGER NOT NULL CHECK(slot IN (1,2)),
+                attempted_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 1,
+                outcome TEXT NOT NULL, PRIMARY KEY(sync_id, slot))""")
+            for slot in (1, 2):
+                backend, synced, error = _slot_cols(slot)
+                skipped = 'sync_skipped_reason_2' if slot == 2 else 'sync_skipped_reason'
+                cursor.execute(f"""INSERT OR IGNORE INTO delivery_attempt
+                    (sync_id, slot, attempted_at, outcome)
+                    SELECT sync_id, ?, COALESCE({synced}, CURRENT_TIMESTAMP),
+                        CASE WHEN {backend} IS NOT NULL OR {skipped} IS NOT NULL
+                             THEN 'resolved' ELSE 'unconfirmed' END
+                    FROM timesheet WHERE {backend} IS NOT NULL OR {skipped} IS NOT NULL
+                        OR {error} IS NOT NULL""", (slot,))
+
             # Migrate existing device config from api_config to device table
             cursor.execute("SELECT COUNT(*) as count FROM device")
             if cursor.fetchone()['count'] == 0:
@@ -445,6 +461,7 @@ class Database:
                 LEFT JOIN device d ON t.device_id = d.id
                 WHERE t.{backend_col} IS NULL
                 AND t.{('sync_skipped_reason_2' if int(slot) == 2 else 'sync_skipped_reason')} IS NULL
+                AND NOT EXISTS (SELECT 1 FROM delivery_attempt a WHERE a.sync_id=t.sync_id AND a.slot={int(slot)})
                 AND t.status = 'success'
                 AND COALESCE(t.excluded_from_sync, 0) = 0
                 AND t.deleted_at IS NULL
@@ -455,7 +472,7 @@ class Database:
         finally:
             conn.close()
 
-    def get_unsynced_timesheets_by_ids(self, ids, slot=1):
+    def get_unsynced_timesheets_by_ids(self, ids, slot=1, manual_retry=False):
         """Get timesheet entries in the given ID list still unsynced for the given slot"""
         if not ids:
             return []
@@ -472,6 +489,9 @@ class Database:
                 LEFT JOIN device d ON t.device_id = d.id
                 WHERE t.{backend_col} IS NULL
                 AND t.{('sync_skipped_reason_2' if int(slot) == 2 else 'sync_skipped_reason')} IS NULL
+                AND {("EXISTS" if manual_retry else "NOT EXISTS")} (
+                    SELECT 1 FROM delivery_attempt a WHERE a.sync_id=t.sync_id AND a.slot={int(slot)}
+                    {"AND a.outcome != 'resolved'" if manual_retry else ""})
                 AND t.status = 'success'
                 AND COALESCE(t.excluded_from_sync, 0) = 0
                 AND t.deleted_at IS NULL
@@ -479,6 +499,118 @@ class Database:
                 ORDER BY t.created_at ASC
             """, tuple(ids))
             return [dict(row) for row in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    def validate_retry_selection(self, payload):
+        """Recheck the exact reviewed IDs, destinations and filters before dispatch."""
+        items = payload['items']
+        if not isinstance(items, list) or not items or len(items) > 10000:
+            raise ValueError('Select between 1 and 10,000 destination records')
+        eligible = {(r['id'], r['slot']): r for r in self.get_retry_queue(payload.get('filters'))}
+        retry_slots = {}
+        for item in items:
+            if type(item.get('id')) is not int or type(item.get('slot')) is not int:
+                raise ValueError('Invalid retry selection')
+            row = eligible.get((item['id'], item['slot']))
+            if not row or row['busy']:
+                raise ValueError('Some selected records changed or are syncing. Refresh the queue.')
+            if row['state'] == 'unconfirmed' and payload.get('reviewed_payroll') is not True:
+                raise ValueError('Check unconfirmed records in Payroll before retrying')
+            retry_slots.setdefault(item['slot'], set()).add(item['id'])
+        return retry_slots
+
+    def claim_delivery(self, ids, slot=1, manual_retry=False):
+        """Durably claim before HTTP. A crash leaves an unconfirmed manual item.
+
+        SQLite serializes claims across service instances. Active claims are held
+        for 120 seconds, longer than the single HTTP request's 60 second timeout.
+        The ledger survives timesheet cleanup and retains the original sync_id.
+        """
+        if not ids or slot not in (1, 2):
+            return []
+        backend, _, error = _slot_cols(slot)
+        skipped = 'sync_skipped_reason_2' if slot == 2 else 'sync_skipped_reason'
+        conn = self.get_connection()
+        claimed = []
+        try:
+            conn.execute('BEGIN IMMEDIATE')
+            for row_id in dict.fromkeys(ids):
+                row = conn.execute(f"""SELECT sync_id FROM timesheet WHERE id=?
+                    AND {backend} IS NULL AND {skipped} IS NULL AND deleted_at IS NULL
+                    AND status='success' AND COALESCE(excluded_from_sync,0)=0""", (row_id,)).fetchone()
+                if not row:
+                    continue
+                previous = conn.execute("""SELECT *,
+                    (outcome='sending' AND attempted_at > datetime('now', '-120 seconds')) AS busy
+                    FROM delivery_attempt WHERE sync_id=? AND slot=?""", (row['sync_id'], slot)).fetchone()
+                if previous and (not manual_retry or previous['outcome'] == 'resolved' or previous['busy']):
+                    continue
+                if manual_retry and not previous:
+                    continue
+                conn.execute("""INSERT INTO delivery_attempt(sync_id,slot,attempted_at,outcome)
+                    VALUES(?,?,datetime('now'),'sending') ON CONFLICT(sync_id,slot) DO UPDATE SET
+                    attempted_at=datetime('now'), attempts=attempts+1, outcome='sending'""", (row['sync_id'], slot))
+                conn.execute(f"UPDATE timesheet SET {error}=? WHERE id=?",
+                    ('Unconfirmed — check Payroll before retrying', row_id))
+                claimed.append(row_id)
+            conn.commit()
+            return claimed
+        finally:
+            conn.close()
+
+    def _finish_delivery(self, conn, timesheet_id, slot, outcome):
+        conn.execute("""UPDATE delivery_attempt SET outcome=? WHERE slot=? AND sync_id=
+            (SELECT sync_id FROM timesheet WHERE id=?)""", (outcome, slot, timesheet_id))
+
+    def get_retry_queue(self, filters=None):
+        """Return reviewable destination-level failures, using attendance dates."""
+        filters = filters or {}
+        if not isinstance(filters, dict):
+            raise ValueError('Invalid filters')
+        date_from, date_to = filters.get('date_from'), filters.get('date_to')
+        for value in (date_from, date_to):
+            if value:
+                datetime.strptime(value, '%Y-%m-%d')
+        if date_from and date_to and date_from > date_to:
+            raise ValueError('Start date must be on or before end date')
+        employees = filters.get('employee_ids', [])
+        if not isinstance(employees, list) or any(type(i) is not int or i <= 0 for i in employees):
+            raise ValueError('Invalid employees')
+        config = self.get_api_config() or {}
+        slots = [1, 2] if config.get('push_enabled_2') and config.get('push_username_2') else [1]
+        rows = []
+        conn = self.get_connection()
+        try:
+            for slot in slots:
+                if filters.get('slot') and int(filters['slot']) != slot:
+                    continue
+                backend, _, error = _slot_cols(slot)
+                skipped = 'sync_skipped_reason_2' if slot == 2 else 'sync_skipped_reason'
+                conditions, params = [], [slot]
+                for value, sql in ((date_from, 't.date >= ?'), (date_to, 't.date <= ?')):
+                    if value:
+                        conditions.append(sql)
+                        params.append(value)
+                if employees:
+                    conditions.append('t.employee_id IN (' + ','.join('?' for _ in employees) + ')')
+                    params.extend(employees)
+                extra = ' AND ' + ' AND '.join(conditions) if conditions else ''
+                found = conn.execute(f"""SELECT t.id, t.employee_id, e.name AS employee_name,
+                    e.employee_code, t.date, t.time, t.log_type, a.slot, a.attempted_at,
+                    a.attempts, t.{error} AS reason,
+                    CASE WHEN a.outcome='failed' THEN 'failed' ELSE 'unconfirmed' END AS state,
+                    (a.outcome='sending' AND a.attempted_at > datetime('now','-120 seconds')) AS busy
+                    FROM timesheet t JOIN employee e ON e.id=t.employee_id
+                    JOIN delivery_attempt a ON a.sync_id=t.sync_id AND a.slot=?
+                    WHERE t.{backend} IS NULL AND t.{skipped} IS NULL AND a.outcome != 'resolved'
+                    AND t.deleted_at IS NULL AND t.status='success'
+                    AND COALESCE(t.excluded_from_sync,0)=0 {extra}
+                    ORDER BY t.date,t.time,t.id""", params).fetchall()
+                rows.extend(dict(row) for row in found)
+            if filters.get('state') in ('failed', 'unconfirmed'):
+                rows = [r for r in rows if r['state'] == filters['state']]
+            return sorted(rows, key=lambda r: (r['date'], r['time'], r['id'], r['slot']))
         finally:
             conn.close()
 
@@ -497,6 +629,7 @@ class Database:
                     {skipped_col} = NULL
                 WHERE id = ?
             """, (backend_timesheet_id, datetime.now(), timesheet_id))
+            self._finish_delivery(conn, timesheet_id, slot, 'resolved')
             conn.commit()
         except Exception as e:
             conn.rollback()
@@ -505,7 +638,7 @@ class Database:
         finally:
             conn.close()
 
-    def mark_timesheet_sync_failed(self, timesheet_id, error_message, slot=1):
+    def mark_timesheet_sync_failed(self, timesheet_id, error_message, slot=1, unconfirmed=False):
         """Mark a timesheet sync as failed for the given slot's destination"""
         _, _, error_col = _slot_cols(slot)
         conn = self.get_connection()
@@ -516,6 +649,7 @@ class Database:
                 SET {error_col} = ?
                 WHERE id = ?
             """, (error_message, timesheet_id))
+            self._finish_delivery(conn, timesheet_id, slot, 'unconfirmed' if unconfirmed else 'failed')
             conn.commit()
         except Exception as e:
             conn.rollback()
@@ -531,6 +665,7 @@ class Database:
         conn = self.get_connection()
         try:
             with conn:
+                self._finish_delivery(conn, timesheet_id, slot, 'resolved')
                 conn.execute(f"""
                     UPDATE timesheet SET {skipped_col} = ?, {error_col} = NULL
                     WHERE id = ? AND {backend_col} IS NULL

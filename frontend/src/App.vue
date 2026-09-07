@@ -90,8 +90,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, h } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, h } from 'vue'
 import DashboardView from './components/DashboardView.vue'
+import RetryQueueView from './components/RetryQueueView.vue'
 import TimesheetView from './components/TimesheetView.vue'
 import ConfigView from './components/ConfigView.vue'
 import LogsView from './components/LogsView.vue'
@@ -145,6 +146,7 @@ const HelpIcon = () => h('svg', { fill: 'none', stroke: 'currentColor', viewBox:
 const views = [
   { id: 'dashboard', label: 'Dashboard', icon: DashboardIcon, component: DashboardView },
   { id: 'timesheets', label: 'Timesheets', icon: TimesheetIcon, component: TimesheetView },
+  { id: 'retry', label: 'Retry Queue', icon: TimesheetIcon, component: RetryQueueView },
   { id: 'config', label: 'Configuration', icon: ConfigIcon, component: ConfigView },
   { id: 'logs', label: 'Logs', icon: LogsIcon, component: LogsView },
   { id: 'updates', label: 'Updates', icon: UpdatesIcon, component: UpdatesView },
@@ -156,7 +158,10 @@ const currentViewComponent = computed(() => {
   return view ? view.component : DashboardView
 })
 
+const openRetryQueue = () => { currentView.value = 'retry' }
+onUnmounted(() => window.removeEventListener('openRetryQueue', openRetryQueue))
 onMounted(async () => {
+  window.addEventListener('openRetryQueue', openRetryQueue)
   try {
     await bridgeService.init()
     console.log('Bridge initialized')

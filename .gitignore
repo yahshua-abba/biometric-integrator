@@ -77,3 +77,5 @@ logs/
 
 # Generated version file (written by CI from git tag)
 backend/VERSION
+
+frontend/dist-demo/

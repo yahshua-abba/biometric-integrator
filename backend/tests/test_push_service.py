@@ -29,6 +29,7 @@ def make_service(db=None):
         'push_password': 'testpass',
         'push_token': None,
     }
+    db.claim_delivery.side_effect = lambda ids, slot, manual: ids
     return PushService(db)
 
 
@@ -114,53 +115,15 @@ class TestPushBatch:
         assert success is True
         assert result['logs_successfully_sync'] == [1]
 
-    def test_push_batch_401_reauth_uses_string_token(self, mocker):
-        """
-        REGRESSION for Bug #1:
-        When a 401 triggers re-authentication, the retry Authorization header
-        must be 'Token <string>', NOT 'Token <dict>'.
-
-        Before the fix, self.authenticate() returned the full dict and the
-        header became: 'Token {'token': 'abc', 'user_logged': ...}'
-        which is invalid and causes the retry to fail.
-        """
+    def test_push_batch_401_invalidates_token_without_automatic_resend(self, mocker):
         svc = make_service()
-
-        # Capture a COPY of headers at call time — the dict is mutated in-place
-        # between the first and second calls, so we can't rely on call_args_list
-        # references pointing to the right state after the fact.
-        captured_headers = []
-
-        def capture_post(url, **kwargs):
-            captured_headers.append(dict(kwargs.get('headers', {})))
-            call_number = len(captured_headers)
-            if call_number == 1:
-                return mock_response(401, {'message': 'Token expired'})
-            return mock_response(200, {'logs_successfully_sync': [1], 'logs_not_sync': []})
-
-        mocker.patch.object(svc.session, 'post', side_effect=capture_post)
-
-        mocker.patch.object(svc, 'authenticate', return_value={
-            'token': 'fresh-token',
-            'user_logged': 'Admin',
-            'company_name': 'Test Co',
-        })
-
-        batch = [{'id': 1, 'employee': 'E001', 'log_time': '08:00', 'log_type': 'IN',
-                  'sync_id': 'ZK_1_1_20260306080000', 'date': '2026-03-06'}]
-
-        success, result = svc.push_batch('expired-token', batch)
-
-        assert success is True
-        assert len(captured_headers) == 2, "Expected 2 HTTP calls: initial + retry after 401"
-
-        retry_auth = captured_headers[1].get('Authorization', '')
-
-        # Must be 'Token fresh-token', NOT 'Token {'token': 'fresh-token', ...}'
-        assert retry_auth == 'Token fresh-token', (
-            f"Authorization header should be 'Token fresh-token' but got: {retry_auth!r}\n"
-            "Bug #1 regression: authenticate() returns a dict — use auth_result['token'], not the dict."
-        )
+        post = mocker.patch.object(svc.session, 'post', return_value=mock_response(401, {}))
+        auth = mocker.patch.object(svc, 'authenticate')
+        success, result = svc.push_batch('expired', [{'id': 1}])
+        assert not success and result['unconfirmed'] is False
+        post.assert_called_once()
+        auth.assert_not_called()
+        svc.database.update_push_token.assert_called_once_with(None, slot=1)
 
     def test_push_batch_network_error_returns_failure(self, mocker):
         """Network errors yield (False, {'error': ...}) — they don't raise."""
