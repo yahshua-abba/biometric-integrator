@@ -241,6 +241,7 @@
         <select v-model="filterStatus" class="input w-48">
           <option value="all">All Records</option>
           <option value="synced">Synced</option>
+          <option value="duplicate">Duplicate skipped</option>
           <option value="pending">Pending</option>
           <option value="error">Errors</option>
           <option value="excluded">Do Not Sync</option>
@@ -333,7 +334,7 @@
                 <span
                   v-if="combinedStatus(entry) === 'deleted'"
                   class="badge bg-red-100 text-red-600"
-                  :title="`Deleted on ${formatDateTime(entry.deleted_at)}${isFullySynced(entry) ? ' · Was synced' : ' · Was not fully synced'}`"
+                  :title="`Deleted on ${formatDateTime(entry.deleted_at)}${isFullyResolved(entry) ? ' · Was processed' : ' · Was not fully processed'}`"
                 >
                   Deleted
                 </span>
@@ -343,6 +344,9 @@
                   :title="statusTitle(entry)"
                 >
                   Synced
+                </span>
+                <span v-else-if="combinedStatus(entry) === 'duplicate'" class="badge bg-gray-100 text-gray-700" :title="statusTitle(entry)">
+                  Duplicate skipped
                 </span>
                 <span
                   v-else-if="combinedStatus(entry) === 'excluded'"
@@ -389,7 +393,7 @@
                     </svg>
                   </button>
                   <button
-                    v-if="!isFullySynced(entry)"
+                    v-if="!isFullyResolved(entry)"
                     @click="toggleExcluded(entry)"
                     class="text-gray-500 hover:text-gray-800"
                     :title="entry.excluded_from_sync ? 'Restore — allow syncing' : 'Mark as do-not-sync'"
@@ -490,21 +494,22 @@ const slotSynced = (entry, slot) => {
   const b = slot === 2 ? entry.backend_timesheet_id_2 : entry.backend_timesheet_id
   return b !== null && b !== undefined
 }
+const slotSkipped = (entry, slot) => !!(slot === 2 ? entry.sync_skipped_reason_2 : entry.sync_skipped_reason)
 const slotError = (entry, slot) => {
-  if (slotSynced(entry, slot)) return false
+  if (slotSynced(entry, slot) || slotSkipped(entry, slot)) return false
   return !!(slot === 2 ? entry.sync_error_message_2 : entry.sync_error_message)
 }
 
 const activeSlots = computed(() => (config2Active.value ? [1, 2] : [1]))
 
-// Synced only when delivered to every active destination.
-const isFullySynced = (entry) => activeSlots.value.every(s => slotSynced(entry, s))
+// A duplicate rejection resolves delivery without claiming a successful upload.
+const isFullyResolved = (entry) => activeSlots.value.every(s => slotSynced(entry, s) || slotSkipped(entry, s))
 const hasAnyError = (entry) => activeSlots.value.some(s => slotError(entry, s))
 
 // One combined status label for the badge column.
 const combinedStatus = (entry) => {
   if (entry.deleted_at) return 'deleted'
-  if (isFullySynced(entry)) return 'synced'
+  if (isFullyResolved(entry)) return activeSlots.value.some(s => slotSkipped(entry, s)) ? 'duplicate' : 'synced'
   if (entry.excluded_from_sync) return 'excluded'
   if (hasAnyError(entry)) return 'error'
   return 'pending'
@@ -535,10 +540,12 @@ const errorLines = (entry) => {
 // Tooltip describing each destination when the second one is active.
 const statusTitle = (entry) => {
   if (!config2Active.value) {
+    if (entry.sync_skipped_reason) return `Duplicate skipped — ${entry.sync_skipped_reason}. Will not retry.`
     return entry.backend_timesheet_id ? `Backend ID: ${entry.backend_timesheet_id}` : (entry.sync_error_message || '')
   }
   const describe = (slot) => {
     if (slotSynced(entry, slot)) return 'synced'
+    if (slotSkipped(entry, slot)) return `duplicate skipped — ${slot === 2 ? entry.sync_skipped_reason_2 : entry.sync_skipped_reason}. Will not retry.`
     if (slotError(entry, slot)) return `error — ${slotErrorMessage(entry, slot)}`
     return 'pending'
   }
@@ -547,7 +554,7 @@ const statusTitle = (entry) => {
 
 // A row is selectable if it has not yet been fully synced (to all active destinations).
 // (Excluded rows are still selectable so the user can unmark them in bulk.)
-const isSelectable = (entry) => !isFullySynced(entry)
+const isSelectable = (entry) => !isFullyResolved(entry)
 
 const selectableIdsOnPage = computed(() =>
   paginatedTimesheets.value.filter(isSelectable).map(e => e.id)
@@ -720,6 +727,8 @@ const filteredTimesheets = computed(() => {
   // 'deleted' records are pre-filtered by the backend endpoint — no extra filter needed
   if (filterStatus.value === 'synced') {
     filtered = filtered.filter(t => combinedStatus(t) === 'synced')
+  } else if (filterStatus.value === 'duplicate') {
+    filtered = filtered.filter(t => combinedStatus(t) === 'duplicate')
   } else if (filterStatus.value === 'pending') {
     filtered = filtered.filter(t => combinedStatus(t) === 'pending')
   } else if (filterStatus.value === 'error') {
@@ -789,7 +798,7 @@ const syncSelected = async () => {
   const byId = new Map(timesheets.value.map(t => [t.id, t]))
   const syncableIds = selectedIds.value.filter(id => {
     const t = byId.get(id)
-    return t && !t.excluded_from_sync && !isFullySynced(t)
+    return t && !t.excluded_from_sync && !isFullyResolved(t)
   })
   if (syncableIds.length === 0) {
     error('All selected records are marked do-not-sync or already synced.')
@@ -857,7 +866,7 @@ const bulkSetExcluded = async (excluded) => {
   const byId = new Map(timesheets.value.map(t => [t.id, t]))
   const eligible = selectedIds.value.filter(id => {
     const t = byId.get(id)
-    return t && !isFullySynced(t)
+    return t && !isFullyResolved(t)
   })
   if (eligible.length === 0) {
     error('No eligible records selected (already-synced rows cannot be excluded).')

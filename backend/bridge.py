@@ -418,7 +418,7 @@ class Bridge(QObject):
 
             # Aggregate results across all destinations
             overall_success = all(r.get("success") for r in results.values())
-            agg = {"processed": 0, "success": 0, "failed": 0, "skipped": 0}
+            agg = {"processed": 0, "success": 0, "failed": 0, "skipped": 0, "duplicates": 0}
             parts = []
             for slot in sorted(results):
                 r = results[slot]

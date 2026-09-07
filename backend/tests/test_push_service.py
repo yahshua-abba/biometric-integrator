@@ -276,7 +276,7 @@ class TestPushData:
 
         assert stats['success'] == 1
         assert stats['failed'] == 1
-        db.mark_timesheet_synced.assert_called_once_with(1, 1)
+        db.mark_timesheet_synced.assert_called_once_with(1, 1, slot=1)
         db.mark_timesheet_sync_failed.assert_called_once()
         failed_args = db.mark_timesheet_sync_failed.call_args[0]
         assert failed_args[0] == 2
