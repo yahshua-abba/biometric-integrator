@@ -40,6 +40,40 @@ class Bridge(QObject):
         self.scheduler = scheduler
         logger.info("Bridge initialized")
 
+    @staticmethod
+    def _validate_help_guide(guide):
+        if not isinstance(guide, str) or not guide.strip() or len(guide) > 30000:
+            raise ValueError('The help guide is empty or too large')
+
+    @pyqtSlot(str, result=str)
+    def copyHelpGuide(self, guide):
+        try:
+            self._validate_help_guide(guide)
+            from PyQt6.QtWidgets import QApplication
+            QApplication.clipboard().setText(guide)
+            return json.dumps({'success': True})
+        except Exception:
+            return json.dumps({'success': False, 'error': 'Could not copy the guide'})
+
+    @pyqtSlot(str, result=str)
+    def openChatGPTGuide(self, guide):
+        """Open only ChatGPT with static help text; never read Payroll data."""
+        try:
+            self._validate_help_guide(guide)
+            from urllib.parse import quote
+            from PyQt6.QtCore import QUrl
+            from PyQt6.QtGui import QDesktopServices
+            url = 'https://chatgpt.com/?q=' + quote(guide, safe='')
+            copied = json.loads(self.copyHelpGuide(guide))['success']
+            if not QDesktopServices.openUrl(QUrl(url)):
+                return json.dumps({'success': False, 'error': 'Could not open the browser. Copy the guide and open chatgpt.com.'})
+            message = 'ChatGPT opened with the guide. Sign in if needed, then ask your question.'
+            if copied:
+                message += ' A copy is also on your clipboard if the guide needs pasting.'
+            return json.dumps({'success': True, 'message': message})
+        except Exception:
+            return json.dumps({'success': False, 'error': 'Could not open ChatGPT. Copy the guide and open chatgpt.com.'})
+
     def set_scheduler(self, scheduler):
         """Set the scheduler reference (called after scheduler is created)"""
         self.scheduler = scheduler

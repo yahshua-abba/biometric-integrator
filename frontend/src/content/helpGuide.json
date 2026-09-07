@@ -1,0 +1,61 @@
+[
+  {"id":"pages","title":"Which page should I use?","items":[
+    "Overview: download attendance with Pull Data Now and send first uploads with Send New Uploads. Attendance totals count punches; the send button counts uploads to each Payroll destination.",
+    "Attendance Records: browse stored punches, filter by attendance date, employee, device, or status, and inspect Sync details. It starts with all statuses in the displayed date range. Send New Selected sends only selected records with a first upload remaining.",
+    "Logs Needing Review: review failed and unconfirmed uploads and retry them manually. Logs is a separate page for pull/push operation history. Configuration manages devices and Payroll destinations; Updates shows releases."
+  ]},
+  {"id":"send-once","title":"How do first uploads and retries work?","items":[
+    "Each punch is attempted once automatically per configured Payroll destination. Scheduled pushes and the send buttons skip previously attempted uploads, including failures and missing confirmations. A manual click on Send New Uploads does not bypass this rule.",
+    "A failure for Payroll 1 does not block a first upload to Payroll 2. If only failed or unconfirmed uploads remain, Send New Uploads is disabled. Use Logs Needing Review for retries.",
+    "Synced means Payroll confirmed the upload. Duplicate skipped means Payroll reported a duplicate and the app will not automatically resend it. Pending means delivery remains unresolved; Sync details shows each destination. Failed is a reported failure. Unconfirmed means the app did not receive a clear result and Payroll may already have saved the punch."
+  ]},
+  {"id":"groups","title":"Why are logs grouped by employee?","items":[
+    "By employee combines affected uploads into one row per employee. The row shows the upload count, distinct attendance-log count, attendance date range, and reported issue. Fix an employee's setup once, then review their affected uploads together.",
+    "For example, 32 attendance logs sent to two Payroll destinations produce 64 upload entries. This does not mean the employee tapped twice. Filter Payroll destination to review one destination. Counts reflect the current dates, employees, and Failed or Unconfirmed tab.",
+    "View logs opens that employee's individual uploads. Individual logs shows separate entries per punch and destination. Expand an issue for the full reason, last attempt (UTC), and attempt count."
+  ]},
+  {"id":"retry","title":"How do I safely retry logs?","items":[
+    "1. Open Logs Needing Review. Choose attendance dates, Payroll destination, and employees. Search employee names or codes in the Employees picker. Quick dates offers Last 7 days, Last 30 days, and All dates.",
+    "2. Choose Failed or Unconfirmed. Correct reported problems such as an unmatched employee ID or missing branch assignment. For Unconfirmed, check the actual Payroll records first. Do not resend a punch that HR intentionally deleted.",
+    "3. Select employee groups or individual uploads, then Review selected. Review all filtered includes the current filter results. The header checkbox selects the current page; selections can span pages. Narrow the scope if it exceeds 10,000 uploads.",
+    "4. Check the review's employees, dates, destinations, and upload count. For unconfirmed uploads, acknowledge that you checked Payroll and verified they should be resent. Confirm the retry. Only that reviewed selection is sent; new arrivals are not added.",
+    "5. Review the results and verify attendance in Payroll. Unresolved uploads remain for review; they do not retry automatically. Opening review from an attendance row carries its employee and date, without selecting or sending anything."
+  ]},
+  {"id":"exclude","title":"What does Mark Do Not Sync do?","items":[
+    "It keeps the record locally but excludes its future uploads to both Payroll destinations, including manual retries. It disappears from Logs Needing Review while marked and remains in Attendance Records under Do Not Sync. It does not delete or change existing Payroll records, and cannot cancel an upload already in flight.",
+    "Use the circle-and-slash action for one row, Mark Do Not Sync for selected rows, or Mark by Date Range for a range. Unmark Do Not Sync or the restore action removes the exclusion. Previous attempts still require manual retry review; unmarking does not automatically resend them.",
+    "Delete Selected and Clear Records remove records from the active local attendance list (soft deletion). The Deleted filter shows them. These actions do not delete Payroll records. Do Not Sync is the reversible control for keeping a visible record while preventing future delivery."
+  ]},
+  {"id":"duplicates","title":"Why could a deleted Payroll log return?","items":[
+    "A prior attempt may have saved a punch without a confirmation reaching the app, or another destination or source may have uploaded it. An approved deletion request alone does not prove that Payroll actually removed the record.",
+    "This app preserves attempt history and does not automatically resend previously attempted punches. Intentionally deleted punches should not be manually retried; mark unresolved local records Do Not Sync when appropriate.",
+    "The app cannot prevent another installation, a replaced local database, a different source identifier, or another integration from uploading a punch. Payroll-side duplicate protection and deletion history are still relevant. Ask your administrator to investigate the original record and sync history rather than assuming a second tap."
+  ]},
+  {"id":"filters","title":"Filters, selections, and dropdowns","items":[
+    "Date filters refer to attendance dates, not retry dates. Both attendance views offer quick date ranges and 25, 50, or 100 rows per page. Changing filters clears the previous selection. Use Clear selection to start over.",
+    "Device, Status, Payroll destination, and Rows per page have styled dropdowns. Use arrow keys to move, Enter to choose, Escape to cancel, or type to find an option. The checkmark shows the selected value.",
+    "If a page looks empty, check the date range, employee, destination, and status filters. Attendance Records and Logs Needing Review use different units and scopes; their counts need not match."
+  ]},
+  {"id":"setup","title":"Install and connect a device","items":[
+    "Install the app using your administrator's installer or https://showcase.yahshuapayroll.com/downloads. Existing installations can use Updates. Follow the installation steps for your operating system.",
+    "Connect a supported ZKTeco device to a router by Ethernet, or supported WiFi. Connect the computer to the same reachable network. Power on the device and check its IP address, subnet mask, gateway, and DNS with IT.",
+    "In Configuration, choose Add Device and enter its name, IP address, port (normally 4370), Comm Key, and Branch ID if required. Save and use Test. Each device can have its own network details and branch.",
+    "Comm Key is the numeric communication password set on the device. Enter the same value in the app, or 0 if none is configured. Models previously listed for this app include K14, K20, K30, K40, U580, T4-C, iClock260, MA300, RSP10K1, and iFace402/ID; confirm support for your device with IT."
+  ]},
+  {"id":"payroll-setup","title":"Configure Payroll and register employees","items":[
+    "In Configuration, use the Payroll server address provided by your administrator. Under Push Configuration, enter the authorized username/password and Login. Configure the optional second destination only as directed. Check the intended company and branch for each destination.",
+    "In Web Payroll, check Settings > Companies > General Settings > Timesheets and Timekeeper Settings > Biometric Integration. Use System ID instead of Employee ID means the auto-generated System ID; otherwise use Employee ID. If Use Biometrics ID is enabled, use the biometric ID required by that setting. Ask the administrator if the settings are unclear.",
+    "In the device's User Management / Add User, register the matching employee ID and fingerprint or face, then save. An incorrect ID may prevent syncing or associate a log with the wrong employee. Branch ID identifies the location; ask the Payroll administrator which value is required."
+  ]},
+  {"id":"verify","title":"Test the setup and verify attendance","items":[
+    "Use one test employee. Record a tap, open Overview > Pull Data Now, choose the device and attendance dates, and check the result in Attendance Records. Pull downloads device records into the app; it does not itself upload them to Payroll.",
+    "Choose Send New Uploads for the first delivery. Read the per-destination result; completion does not guarantee that every record succeeded. Sign in to Web Payroll and check Timesheet > Daily Logs for the employee, date, time, and IN/OUT type.",
+    "Pull and first-upload pushes can run on schedules in Configuration. An interval of 0 disables that automatic schedule. Previously attempted unresolved uploads always need manual review, even after restarting the app."
+  ]},
+  {"id":"troubleshooting","title":"Troubleshooting and further help","items":[
+    "Device connection failed: check power, network reachability, device IP, port 4370, and matching Comm Key. Ask IT to check firewall access and ping the device. Multiple devices must use distinct IP addresses. For subnet or gateway changes, ask IT to provide the correct values.",
+    "Upload failed: check internet access, the configured Payroll login, matching employee IDs, and branch assignments. Fix the reported cause before retrying. For Unconfirmed or missing Payroll logs, inspect Payroll before deciding to resend; restarting the app does not resolve the uncertainty.",
+    "Use Logs for sync-operation history and Configuration > System Logs for technical diagnostics. Contact your administrator or IT support with the affected dates, destination, and error message. Avoid sharing passwords or unnecessary employee data.",
+    "Ask ChatGPT opens the guide in a browser conversation so you can ask follow-up questions. Only this static guide is included, not your employee records, credentials, or current configuration. ChatGPT cannot inspect your app or Payroll from this guide. If signing in clears the text, use Copy Guide and paste it into ChatGPT."
+  ]}
+]
