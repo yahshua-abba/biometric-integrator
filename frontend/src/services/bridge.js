@@ -109,6 +109,10 @@ class BridgeService {
     })
   }
 
+  async openChatGPTGuide(guide) { return this.call('openChatGPTGuide', guide) }
+
+  async copyHelpGuide(guide) { return this.call('copyHelpGuide', guide) }
+
   // ==================== TIMESHEET METHODS ====================
 
   async getTimesheetStats() {

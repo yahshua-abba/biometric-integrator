@@ -130,3 +130,22 @@ The desktop sidebar has three attendance views:
 - **Logs Needing Review** is the manual retry review. Opening review from an attendance row carries that employee and attendance date into the individual logs view; unconfirmed records open the Unconfirmed tab. Nothing is preselected or submitted by navigating here.
 
 Overview's totals count attendance records; the send button and Logs Needing Review count uploads to individual Payroll destinations. One attendance record may have two uploads.
+
+### Help guide and ChatGPT handoff
+
+Open **Help & FAQ** in the desktop app. Search for `grouped`, `retry`, or
+`Do Not Sync` to find the updated explanations. The displayed guide and the
+ChatGPT prompt share `frontend/src/content/helpGuide.json`; a search never
+removes sections from the handoff.
+
+**Ask ChatGPT** opens the default browser at ChatGPT with the complete static
+guide encoded in the `q` query parameter. In the signed-in macOS browser check,
+ChatGPT started a conversation with the guide and asked what help was needed.
+The desktop app also copies the guide to the clipboard. **Copy Guide** provides
+an explicit fallback, with selectable text if clipboard access fails.
+
+The browser handoff depends on ChatGPT's website behavior, not a guaranteed
+prefill API. Sign-in, browser URL limits, or website changes may require pasting
+the copied guide. Windows browser behavior still needs platform testing.
+No employee records, credentials, live configuration, or Payroll requests are
+included. The guide does not grant ChatGPT access to the app.
