@@ -1,5 +1,5 @@
 <template>
-  <div class="p-6 space-y-6">
+  <div class="attendance-records p-6 lg:p-8 max-w-screen-2xl mx-auto space-y-5">
     <!-- Clear Timesheets Modal -->
     <div v-if="showClearModal" class="fixed inset-0 z-50 flex items-center justify-center">
       <div class="absolute inset-0 bg-black bg-opacity-50" @click="closeClearModal"></div>
@@ -133,14 +133,38 @@
 
     <SyncProgressModal :show="showProgressModal" :configs="pushConfigs" />
 
-    <div class="flex flex-wrap items-center justify-between gap-4">
-      <h1 class="text-3xl font-bold text-gray-900">Attendance Records</h1>
-      <div class="flex flex-wrap gap-2">
+    <header class="flex items-start justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-semibold tracking-tight text-gray-900">Attendance Records</h1>
+        <p class="text-sm text-gray-500 mt-1">Browse attendance and send new uploads. For failed or unconfirmed uploads, <button class="text-primary-700 underline" @click="openRetryQueue">open Logs Needing Review</button>.</p>
+      </div>
+      <button class="btn btn-secondary text-sm shrink-0" :disabled="loading" @click="loadData">Refresh</button>
+    </header>
+
+    <section class="bg-white border border-gray-200 rounded-lg" aria-label="Attendance filters">
+      <div class="grid gap-4 p-4 sm:grid-cols-2 xl:grid-cols-5">
+        <label class="text-xs font-medium text-gray-500">Attendance date from<input v-model="filterDateFrom" type="date" class="input text-sm mt-1.5 text-gray-900" /></label>
+        <label class="text-xs font-medium text-gray-500">Attendance date to<input v-model="filterDateTo" type="date" class="input text-sm mt-1.5 text-gray-900" /></label>
+        <label class="text-xs font-medium text-gray-500">Employee<input v-model="searchQuery" type="search" placeholder="Search name or employee code" class="input text-sm mt-1.5 text-gray-900" /></label>
+        <div><span class="block text-xs font-medium text-gray-500">Device</span><AppSelect v-model="filterDevice" label="Device" :options="deviceOptions" class="mt-1.5" /></div>
+        <div><span class="block text-xs font-medium text-gray-500">Status</span><AppSelect v-model="filterStatus" label="Status" :options="statusOptions" class="mt-1.5" /></div>
+      </div>
+      <DateRangeShortcuts class="px-4 pb-3" @change="setRange" />
+    </section>
+
+    <!-- Table -->
+    <section class="bg-white border border-gray-200 rounded-lg overflow-hidden" :aria-busy="loading">
+      <div class="px-4 py-3 border-b space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <p class="text-sm text-gray-600"><strong class="text-gray-900">{{ filteredTimesheets.length.toLocaleString() }}</strong> attendance records<span v-if="selectedIds.length"> · {{ selectedIds.length }} selected</span></p>
+          <button v-if="selectedIds.length" class="text-xs text-gray-500" @click="selectedIds = []">Clear selection</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
         <button
           @click="syncSelected"
           :disabled="newSelectedIds.length === 0 || pushLoading"
-          class="btn bg-green-600 text-white hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Send only uploads that have never been attempted. Review retries in Needs Attention."
+          class="btn btn-primary text-sm"
+          title="Send only uploads that have never been attempted. Review retries in Logs Needing Review."
         >
           <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
@@ -150,7 +174,7 @@
         <button
           v-if="selectedIds.length > 0"
           @click="bulkSetExcluded(true)"
-          class="btn bg-gray-200 text-gray-800 hover:bg-gray-300"
+          class="btn btn-secondary text-sm"
           title="Mark selected records as do-not-sync"
         >
           <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -161,7 +185,7 @@
         </button>
         <button
           @click="openExcludeRangeModal"
-          class="btn bg-gray-200 text-gray-800 hover:bg-gray-300"
+          class="btn btn-secondary text-sm"
           title="Mark all unsynced records in a date range as do-not-sync"
         >
           <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -172,7 +196,7 @@
         <button
           v-if="selectedIds.length > 0 && filterStatus === 'excluded'"
           @click="bulkSetExcluded(false)"
-          class="btn bg-gray-200 text-gray-800 hover:bg-gray-300"
+          class="btn btn-secondary text-sm"
           title="Restore selected records so they sync again"
         >
           <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -183,7 +207,7 @@
         <button
           v-if="selectedIds.length > 0"
           @click="confirmDeleteSelected"
-          class="btn bg-red-600 text-white hover:bg-red-700"
+          class="btn text-sm text-red-700 hover:bg-red-50"
           :title="`Delete ${selectedIds.length} selected record(s)`"
         >
           <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -191,70 +215,15 @@
           </svg>
           Delete Selected ({{ selectedIds.length }})
         </button>
-        <button @click="openClearModal" class="btn bg-red-100 text-red-700 hover:bg-red-200">
+        <button @click="openClearModal" class="btn text-sm text-red-700 hover:bg-red-50">
           <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
           </svg>
           Clear Records
         </button>
-        <button @click="loadData" class="btn btn-secondary">
-          <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-          </svg>
-          Refresh
-        </button>
+        </div>
+        <p class="text-xs text-gray-500">Each row is one attendance record. Send New Selected sends only first attempts to each Payroll destination.</p>
       </div>
-    </div>
-
-    <p class="text-sm text-gray-500 my-4">Each row is one attendance record. Send New Selected sends only first attempts to each Payroll destination. For failed or unconfirmed uploads, <button class="text-primary-700 underline" @click="openRetryQueue">review retries in Needs Attention</button>.</p>
-
-    <!-- Filters -->
-    <div class="card">
-      <div class="flex gap-4 items-center flex-wrap">
-        <div class="flex-1 min-w-[200px]">
-          <input
-            v-model="searchQuery"
-            type="text"
-            placeholder="Search by employee name or ID..."
-            class="input"
-          />
-        </div>
-        <div class="flex items-center gap-2">
-          <label class="text-sm text-gray-600">From:</label>
-          <input
-            v-model="filterDateFrom"
-            type="date"
-            class="input w-40"
-          />
-        </div>
-        <div class="flex items-center gap-2">
-          <label class="text-sm text-gray-600">To:</label>
-          <input
-            v-model="filterDateTo"
-            type="date"
-            class="input w-40"
-          />
-        </div>
-        <select v-model="filterDevice" class="input w-48">
-          <option value="all">All Devices</option>
-          <option v-for="device in devices" :key="device.id" :value="device.id">
-            {{ device.name }}
-          </option>
-        </select>
-        <select v-model="filterStatus" class="input w-48">
-          <option value="all">All Records</option>
-          <option value="synced">Synced</option>
-          <option value="duplicate">Duplicate skipped</option>
-          <option value="pending">Pending</option>
-          <option value="error">Errors</option>
-          <option value="excluded">Do Not Sync</option>
-          <option value="deleted">Deleted</option>
-        </select>
-      </div>
-    </div>
-
-    <!-- Table -->
-    <div class="card overflow-hidden">
       <div v-if="loading" class="text-center py-8 text-gray-500">
         Loading timesheets...
       </div>
@@ -262,10 +231,10 @@
         No attendance records match these filters
       </div>
       <div v-else class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50">
+        <table class="w-full text-sm text-left">
+          <thead class="bg-gray-50 border-y text-xs text-gray-500">
             <tr>
-              <th class="px-4 py-3 text-left">
+              <th class="py-3 pl-4 w-12">
                 <input
                   type="checkbox"
                   class="h-4 w-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
@@ -273,38 +242,38 @@
                   :indeterminate.prop="someSelected && !allSelectableSelected"
                   :disabled="selectableIdsOnPage.length === 0"
                   @change="toggleSelectAll($event.target.checked)"
-                  title="Select all syncable rows on this page"
+                  title="Select this page" aria-label="Select this page"
                 />
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="p-3 font-medium">
                 Date & Time
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="p-3 font-medium">
                 Employee
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="p-3 font-medium">
                 Device
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="p-3 font-medium">
                 Type
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="p-3 font-medium">
                 Status
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Sync ID
+              <th class="p-3 font-medium">
+                Details
               </th>
-              <th v-if="filterStatus === 'error'" class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th v-if="filterStatus === 'error'" class="p-3 font-medium">
                 Error Message
               </th>
-              <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th class="p-3 font-medium">
                 Actions
               </th>
             </tr>
           </thead>
           <tbody class="bg-white divide-y divide-gray-200">
             <tr v-for="entry in paginatedTimesheets" :key="entry.id" :class="filterStatus === 'deleted' ? 'opacity-60' : ''">
-              <td class="px-4 py-4">
+              <td class="py-3 pl-4">
                 <input
                   v-if="isSelectable(entry) && filterStatus !== 'deleted'"
                   type="checkbox"
@@ -313,27 +282,22 @@
                   @change="toggleSelection(entry.id, $event.target.checked)"
                 />
               </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+              <td class="p-3 whitespace-nowrap text-sm text-gray-900">
                 {{ entry.date }} {{ entry.time }}
               </td>
-              <td class="px-6 py-4 whitespace-nowrap">
+              <td class="p-3 whitespace-nowrap">
                 <div class="text-sm font-medium text-gray-900">{{ entry.employee_name }}</div>
                 <div class="text-sm text-gray-500">{{ entry.employee_code || 'N/A' }}</div>
               </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600">
+              <td class="p-3 whitespace-nowrap text-sm text-gray-600">
                 {{ entry.device_name || '-' }}
               </td>
-              <td class="px-6 py-4 whitespace-nowrap">
-                <span
-                  :class="[
-                    'badge',
-                    entry.log_type === 'in' ? 'badge-success' : 'badge-warning'
-                  ]"
-                >
+              <td class="p-3 whitespace-nowrap">
+                <span class="text-xs font-medium text-gray-600">
                   {{ entry.log_type.toUpperCase() }}
                 </span>
               </td>
-              <td class="px-6 py-4 whitespace-nowrap">
+              <td class="p-3 whitespace-nowrap">
                 <span
                   v-if="combinedStatus(entry) === 'deleted'"
                   class="badge bg-red-100 text-red-600"
@@ -360,19 +324,19 @@
                 </span>
                 <span
                   v-else-if="combinedStatus(entry) === 'error'"
-                  class="badge badge-error"
+                  :class="hasUnconfirmed(entry) ? 'text-xs font-medium text-amber-700' : 'text-xs font-medium text-red-700'"
                   :title="statusTitle(entry)"
                 >
-                  {{ config2Active ? 'Partial / Error' : 'Error' }}
+                  {{ hasUnconfirmed(entry) ? 'Unconfirmed' : 'Failed' }}
                 </span>
                 <span v-else class="badge badge-warning" :title="statusTitle(entry)">
                   Pending
                 </span>
               </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-mono">
-                {{ entry.sync_id }}
+              <td class="p-3 whitespace-nowrap text-sm text-gray-500 font-mono">
+                <details class="text-xs font-sans"><summary class="cursor-pointer">Sync details</summary><p class="font-mono mt-2">{{ entry.sync_id }}</p><p class="whitespace-pre-line mt-1">{{ statusTitle(entry) }}</p></details>
               </td>
-              <td v-if="filterStatus === 'error'" class="px-6 py-4 text-sm text-red-600 max-w-md">
+              <td v-if="filterStatus === 'error'" class="p-3 text-sm text-red-600 max-w-md">
                 <div
                   v-for="line in errorLines(entry)"
                   :key="line.slot"
@@ -383,13 +347,13 @@
                   {{ line.msg }}
                 </div>
               </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm">
+              <td class="p-3 whitespace-nowrap text-sm">
                 <div v-if="!entry.deleted_at" class="flex items-center gap-3">
                   <button
                     v-if="combinedStatus(entry) === 'error'"
                     @click="retrySync(entry)"
                     class="text-primary-600 hover:text-primary-900"
-                    title="Review in Needs Attention"
+                    title="Review in Logs Needing Review"
                   >
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -417,47 +381,8 @@
         </table>
       </div>
 
-      <!-- Pagination -->
-      <div v-if="totalPages > 1" class="bg-gray-50 px-6 py-4 flex items-center justify-between border-t">
-        <div class="text-sm text-gray-700">
-          Showing {{ (currentPage - 1) * pageSize + 1 }} to {{ Math.min(currentPage * pageSize, filteredTimesheets.length) }}
-          of {{ filteredTimesheets.length }} results
-        </div>
-        <div class="flex gap-2">
-          <button
-            @click="currentPage = 1"
-            :disabled="currentPage === 1"
-            class="btn btn-secondary"
-          >
-            First
-          </button>
-          <button
-            @click="currentPage--"
-            :disabled="currentPage === 1"
-            class="btn btn-secondary"
-          >
-            Previous
-          </button>
-          <span class="px-3 py-2 text-sm text-gray-600">
-            Page {{ currentPage }} of {{ totalPages }}
-          </span>
-          <button
-            @click="currentPage++"
-            :disabled="currentPage === totalPages"
-            class="btn btn-secondary"
-          >
-            Next
-          </button>
-          <button
-            @click="currentPage = totalPages"
-            :disabled="currentPage === totalPages"
-            class="btn btn-secondary"
-          >
-            Last
-          </button>
-        </div>
-      </div>
-    </div>
+      <TablePagination v-model:page="currentPage" v-model:page-size="pageSize" :total="filteredTimesheets.length" :unit="filteredTimesheets.length === 1 ? 'record' : 'records'" :loading="loading" />
+    </section>
   </div>
 </template>
 
@@ -467,6 +392,9 @@ import bridgeService from '../services/bridge'
 import { useToast } from '../composables/useToast'
 import { showPushResultToasts } from '../utils/pushResultToast'
 import SyncProgressModal from './SyncProgressModal.vue'
+import TablePagination from './TablePagination.vue'
+import AppSelect from './AppSelect.vue'
+import DateRangeShortcuts from './DateRangeShortcuts.vue'
 
 const { success, error, info } = useToast()
 
@@ -476,10 +404,12 @@ const loading = ref(false)
 const searchQuery = ref('')
 const filterStatus = ref('all')
 const filterDevice = ref('all')
+const deviceOptions = computed(() => [{ value: 'all', label: 'All devices' }, ...devices.value.map(d => ({ value: d.id, label: d.name }))])
+const statusOptions = [{ value: 'all', label: 'All records' }, { value: 'synced', label: 'Synced' }, { value: 'duplicate', label: 'Duplicate skipped' }, { value: 'pending', label: 'Pending' }, { value: 'error', label: 'Failed / Unconfirmed' }, { value: 'excluded', label: 'Do Not Sync' }, { value: 'deleted', label: 'Deleted' }]
 const filterDateFrom = ref('')
 const filterDateTo = ref('')
 const currentPage = ref(1)
-const pageSize = 50
+const pageSize = ref(25)
 
 // Selection state for manual sync
 const selectedIds = ref([])
@@ -499,6 +429,7 @@ const slotSynced = (entry, slot) => {
   return b !== null && b !== undefined
 }
 const slotSkipped = (entry, slot) => !!(slot === 2 ? entry.sync_skipped_reason_2 : entry.sync_skipped_reason)
+const hasUnconfirmed = entry => activeSlots.value.some(slot => !slotSynced(entry, slot) && !slotSkipped(entry, slot) && ['unconfirmed', 'sending'].includes(entry[`delivery_outcome_${slot}`]))
 const slotError = (entry, slot) => {
   if (slotSynced(entry, slot) || slotSkipped(entry, slot)) return false
   return ['failed', 'unconfirmed', 'sending'].includes(entry[`delivery_outcome_${slot}`]) || !!(slot === 2 ? entry.sync_error_message_2 : entry.sync_error_message)
@@ -594,7 +525,7 @@ const toggleSelectAll = (checked) => {
 }
 
 // Reset to page 1 and clear selection when any filter changes
-watch([searchQuery, filterStatus, filterDevice, filterDateFrom, filterDateTo], () => {
+watch([searchQuery, filterStatus, filterDevice, filterDateFrom, filterDateTo, pageSize], () => {
   currentPage.value = 1
   selectedIds.value = []
 })
@@ -604,6 +535,8 @@ watch(filterStatus, (newVal, oldVal) => {
   const crossesBoundary = (newVal === 'deleted') !== (oldVal === 'deleted')
   if (crossesBoundary) loadData()
 })
+
+const setRange = range => { filterDateFrom.value = range.date_from; filterDateTo.value = range.date_to }
 
 // Initialize date filters (30 days ago to today)
 const initDateFilters = () => {
@@ -756,13 +689,9 @@ const filteredTimesheets = computed(() => {
   return filtered
 })
 
-const totalPages = computed(() => {
-  return Math.ceil(filteredTimesheets.value.length / pageSize)
-})
-
 const paginatedTimesheets = computed(() => {
-  const start = (currentPage.value - 1) * pageSize
-  const end = start + pageSize
+  const start = (currentPage.value - 1) * pageSize.value
+  const end = start + pageSize.value
   return filteredTimesheets.value.slice(start, end)
 })
 
@@ -880,7 +809,7 @@ const bulkSetExcluded = async (excluded) => {
 const retrySync = entry => window.dispatchEvent(new CustomEvent('openRetryQueue', { detail: {
   employee: { employee_id: entry.employee_id, employee_name: entry.employee_name, employee_code: entry.employee_code },
   date: entry.date,
-  state: activeSlots.value.some(slot => !slotSynced(entry, slot) && !slotSkipped(entry, slot) && ['unconfirmed', 'sending'].includes(entry[`delivery_outcome_${slot}`])) ? 'unconfirmed' : 'failed'
+  state: hasUnconfirmed(entry) ? 'unconfirmed' : 'failed'
 } }))
 const openRetryQueue = () => window.dispatchEvent(new Event('openRetryQueue'))
 
@@ -911,3 +840,9 @@ onUnmounted(() => {
   window.removeEventListener('syncCompleted', handleSyncCompleted)
 })
 </script>
+
+<style scoped>
+.attendance-records { font-variant-numeric: tabular-nums; }
+.attendance-records button:focus-visible, .attendance-records input:focus-visible, .attendance-records summary:focus-visible { outline: 2px solid #2563eb; outline-offset: 3px; }
+.attendance-records button:disabled { cursor: not-allowed; }
+</style>

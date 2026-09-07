@@ -14,6 +14,6 @@ it('preserves record context through navigation and clears it for the general qu
   window.dispatchEvent(new CustomEvent('openRetryQueue', { detail }))
   await flushPromises()
   expect(wrapper.findComponent(RetryQueueView).props('initialContext')).toEqual(detail)
-  await wrapper.findAll('button').find(b => b.text() === 'Needs Attention').trigger('click')
+  await wrapper.findAll('button').find(b => b.text() === 'Logs Needing Review').trigger('click')
   expect(wrapper.findComponent(RetryQueueView).props('initialContext')).toBeNull()
 })

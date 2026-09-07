@@ -1,17 +1,17 @@
 <template>
   <main class="retry-queue p-6 lg:p-8 max-w-screen-2xl mx-auto space-y-5">
     <header class="flex items-start justify-between gap-4">
-      <div><h1 class="text-2xl font-semibold tracking-tight text-gray-900">Needs Attention</h1><p class="text-sm text-gray-500 mt-1">Review employees first, then the uploads that need attention. Retries are always manual.</p></div>
+      <div><h1 class="text-2xl font-semibold tracking-tight text-gray-900">Logs Needing Review</h1><p class="text-sm text-gray-500 mt-1">Review employees first, then the uploads that need attention. Retries are always manual.</p></div>
       <button class="btn btn-secondary text-sm" :disabled="loading" @click="load">Refresh</button>
     </header>
     <section class="bg-white border border-gray-200 rounded-lg" aria-label="Retry filters">
       <div class="grid gap-4 p-4 sm:grid-cols-2 xl:grid-cols-4">
         <label class="text-xs font-medium text-gray-500">Attendance date from<input v-model="filters.date_from" type="date" class="input text-sm mt-1.5 text-gray-900" /></label>
         <label class="text-xs font-medium text-gray-500">Attendance date to<input v-model="filters.date_to" type="date" class="input text-sm mt-1.5 text-gray-900" /></label>
-        <label class="text-xs font-medium text-gray-500">Payroll destination<select v-model.number="filters.slot" class="input text-sm mt-1.5 text-gray-900"><option :value="0">All destinations</option><option :value="1">Payroll 1 (Primary)</option><option :value="2">Payroll 2 (Secondary)</option></select></label>
+        <div><span class="block text-xs font-medium text-gray-500">Payroll destination</span><AppSelect v-model="filters.slot" label="Payroll destination" :options="[{ value: 0, label: 'All destinations' }, { value: 1, label: 'Payroll 1 (Primary)' }, { value: 2, label: 'Payroll 2 (Secondary)' }]" class="mt-1.5" /></div>
         <RetryEmployeeFilter v-model="employees" :filters="filters" @open-change="pickerOpen = $event" />
       </div>
-      <div class="px-4 pb-3 flex flex-wrap items-center gap-3 text-xs text-gray-500"><span>Quick dates:</span><button @click="setRange(7)">Last 7 days</button><button @click="setRange(30)">Last 30 days</button><button @click="setRange(0)">All dates</button><span v-if="employees.length" class="ml-auto">{{ employeeSummary }}</span></div>
+      <div class="px-4 pb-3 flex flex-wrap items-center gap-3 text-xs text-gray-500"><DateRangeShortcuts @change="range => Object.assign(filters, range)" /><span v-if="employees.length" class="ml-auto">{{ employeeSummary }}</span></div>
     </section>
     <p v-if="invalidDates" role="alert" class="text-sm text-red-700">Start date must be on or before end date.</p>
     <p v-if="error" role="alert" class="text-sm text-red-700">{{ error }}</p>
@@ -67,10 +67,7 @@
         </table>
       </div>
       <div v-if="!data.rows.length" class="px-6 py-14 text-center text-sm"><p class="font-medium text-gray-700">{{ loading ? 'Loading queue…' : 'No matching ' + (state === 'failed' ? 'failed' : 'unconfirmed') + ' uploads' }}</p><p class="text-gray-500 mt-1">Try another date range, employee, or status.</p></div>
-      <footer class="border-t px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs text-gray-500">
-        <label>Rows per page <select v-model.number="pageSize" class="ml-2 rounded border border-gray-200 p-1"><option :value="25">25</option><option :value="50">50</option><option :value="100">100</option></select></label>
-        <div class="flex items-center gap-4"><span>{{ number(data.total ? (data.page-1)*pageSize+1 : 0) }}–{{ number(Math.min(data.page*pageSize, data.total)) }} of {{ number(data.total) }} {{ mode === 'employees' ? (data.total === 1 ? 'employee' : 'employees') : (data.total === 1 ? 'upload' : 'uploads') }}</span><button :disabled="data.page <= 1 || loading" @click="page--">Previous</button><button :disabled="data.page*pageSize >= data.total || loading" @click="page++">Next</button></div>
-      </footer>
+      <TablePagination :page="data.page" v-model:page-size="pageSize" :total="data.total" :unit="mode === 'employees' ? (data.total === 1 ? 'employee' : 'employees') : (data.total === 1 ? 'upload' : 'uploads')" :loading="loading" @update:page="page = $event" />
     </section>
     <div v-if="review" class="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" @keydown.esc="review = false">
       <section ref="dialog" @keydown.tab="trapFocus" role="dialog" aria-modal="true" aria-labelledby="retry-review-title" class="bg-white rounded-xl shadow-xl max-w-xl w-full p-6 space-y-4">
@@ -90,6 +87,9 @@
 import { nextTick, computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import bridge from '../services/bridge'
 import RetryEmployeeFilter from './RetryEmployeeFilter.vue'
+import TablePagination from './TablePagination.vue'
+import AppSelect from './AppSelect.vue'
+import DateRangeShortcuts from './DateRangeShortcuts.vue'
 const props = defineProps({ initialContext: { type: Object, default: null } })
 const empty = () => ({ rows: [], total: 0, uploads: 0, employees: 0, available: 0, page: 1, counts: { failed: 0, unconfirmed: 0 } })
 const data = ref(empty()), employees = ref([]), selected = ref([]), focusEmployee = ref(null)
@@ -123,12 +123,6 @@ watch(page, () => { if (ready) load() })
 watch(employees, () => { focusEmployee.value = null }, { deep: true })
 function showEmployees() { focusEmployee.value = null; mode.value = 'employees' }
 function openEmployee(row) { focusEmployee.value = row; mode.value = 'logs' }
-function setRange(days) {
-  if (!days) { filters.date_from = ''; filters.date_to = ''; return }
-  const format = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-  const now = new Date(), from = new Date(now); from.setDate(from.getDate()-days+1)
-  filters.date_from = format(from); filters.date_to = format(now)
-}
 function selectRow(row, checked) {
   selected.value = selected.value.filter(s => key(s) !== key(row))
   if (checked) selected.value.push(row)
