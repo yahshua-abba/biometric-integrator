@@ -507,7 +507,19 @@ class Database:
         items = payload['items']
         if not isinstance(items, list) or not items or len(items) > 10000:
             raise ValueError('Select between 1 and 10,000 destination records')
-        eligible = {(r['id'], r['slot']): r for r in self.get_retry_queue(payload.get('filters'))}
+        for item in items:
+            if not isinstance(item, dict) or type(item.get('id')) is not int or item['id'] <= 0 or type(item.get('slot')) is not int or item['slot'] not in (1, 2):
+                raise ValueError('Invalid retry selection')
+        query, params, state = self._retry_query(payload.get('filters'))
+        conn = self.get_connection()
+        try:
+            conn.execute('CREATE TEMP TABLE selected_retry(id INTEGER, slot INTEGER, PRIMARY KEY(id,slot))')
+            conn.executemany('INSERT OR IGNORE INTO selected_retry VALUES(?,?)', [(item['id'], item['slot']) for item in items])
+            rows = conn.execute(query + """ SELECT scoped.* FROM scoped JOIN selected_retry s
+                ON s.id=scoped.id AND s.slot=scoped.slot WHERE (?='all' OR state=?)""", [*params, state, state]).fetchall()
+            eligible = {(r['id'], r['slot']): r for r in rows}
+        finally:
+            conn.close()
         retry_slots = {}
         for item in items:
             if type(item.get('id')) is not int or type(item.get('slot')) is not int:
@@ -563,54 +575,121 @@ class Database:
         conn.execute("""UPDATE delivery_attempt SET outcome=? WHERE slot=? AND sync_id=
             (SELECT sync_id FROM timesheet WHERE id=?)""", (outcome, slot, timesheet_id))
 
-    def get_retry_queue(self, filters=None):
-        """Return reviewable destination-level failures, using attendance dates."""
-        filters = filters or {}
+    def _retry_query(self, filters=None):
+        """Build a parameterized queue query shared by paging and retry validation."""
+        filters = {} if filters is None else filters
         if not isinstance(filters, dict):
             raise ValueError('Invalid filters')
         date_from, date_to = filters.get('date_from'), filters.get('date_to')
         for value in (date_from, date_to):
             if value:
-                datetime.strptime(value, '%Y-%m-%d')
+                if not isinstance(value, str) or datetime.strptime(value, '%Y-%m-%d').strftime('%Y-%m-%d') != value:
+                    raise ValueError('Use YYYY-MM-DD dates')
         if date_from and date_to and date_from > date_to:
             raise ValueError('Start date must be on or before end date')
         employees = filters.get('employee_ids', [])
-        if not isinstance(employees, list) or any(type(i) is not int or i <= 0 for i in employees):
+        if not isinstance(employees, list) or len(employees) > 10000 or any(type(i) is not int or i <= 0 for i in employees):
             raise ValueError('Invalid employees')
+        slot_filter = filters.get('slot', 0)
+        if type(slot_filter) is not int or slot_filter not in (0, 1, 2):
+            raise ValueError('Invalid Payroll destination')
+        state = filters.get('state', 'all')
+        if state not in ('all', 'failed', 'unconfirmed'):
+            raise ValueError('Invalid retry status')
+        search = filters.get('search', '')
+        if not isinstance(search, str) or len(search) > 100:
+            raise ValueError('Search must be at most 100 characters')
         config = self.get_api_config() or {}
         slots = [1, 2] if config.get('push_enabled_2') and config.get('push_username_2') else [1]
-        rows = []
+        clauses, params = [], []
+        for slot in slots:
+            backend, _, error = _slot_cols(slot)
+            skipped = 'sync_skipped_reason_2' if slot == 2 else 'sync_skipped_reason'
+            clauses.append(f"""SELECT t.id, t.employee_id, e.name AS employee_name,
+                e.employee_code, t.date, t.time, t.log_type, a.slot, a.attempted_at,
+                a.attempts, t.{error} AS reason,
+                CASE WHEN a.outcome='failed' THEN 'failed' ELSE 'unconfirmed' END AS state,
+                (a.outcome='sending' AND a.attempted_at > datetime('now','-120 seconds')) AS busy
+                FROM timesheet t JOIN employee e ON e.id=t.employee_id
+                JOIN delivery_attempt a ON a.sync_id=t.sync_id AND a.slot=?
+                WHERE t.{backend} IS NULL AND t.{skipped} IS NULL AND a.outcome != 'resolved'
+                AND t.deleted_at IS NULL AND t.status='success'
+                AND COALESCE(t.excluded_from_sync,0)=0""")
+            params.append(slot)
+        where = []
+        for value, sql in ((date_from, 'date >= ?'), (date_to, 'date <= ?'),
+                           (slot_filter, 'slot = ?')):
+            if value:
+                where.append(sql)
+                params.append(value)
+        if employees:
+            where.append('employee_id IN (' + ','.join('?' for _ in employees) + ')')
+            params.extend(employees)
+        if search.strip():
+            where.append("(instr(lower(employee_name),lower(?)) > 0 OR instr(lower(employee_code),lower(?)) > 0)")
+            params.extend([search.strip(), search.strip()])
+        scoped = ' AND '.join(where) or '1=1'
+        query = f"WITH queue AS ({' UNION ALL '.join(clauses)}), scoped AS (SELECT * FROM queue WHERE {scoped})"
+        return query, params, state
+
+    def get_retry_queue(self, filters=None):
+        """Full queue for legacy callers; interactive views use bounded SQL pages."""
+        query, params, state = self._retry_query(filters)
         conn = self.get_connection()
         try:
-            for slot in slots:
-                if filters.get('slot') and int(filters['slot']) != slot:
-                    continue
-                backend, _, error = _slot_cols(slot)
-                skipped = 'sync_skipped_reason_2' if slot == 2 else 'sync_skipped_reason'
-                conditions, params = [], [slot]
-                for value, sql in ((date_from, 't.date >= ?'), (date_to, 't.date <= ?')):
-                    if value:
-                        conditions.append(sql)
-                        params.append(value)
-                if employees:
-                    conditions.append('t.employee_id IN (' + ','.join('?' for _ in employees) + ')')
-                    params.extend(employees)
-                extra = ' AND ' + ' AND '.join(conditions) if conditions else ''
-                found = conn.execute(f"""SELECT t.id, t.employee_id, e.name AS employee_name,
-                    e.employee_code, t.date, t.time, t.log_type, a.slot, a.attempted_at,
-                    a.attempts, t.{error} AS reason,
-                    CASE WHEN a.outcome='failed' THEN 'failed' ELSE 'unconfirmed' END AS state,
-                    (a.outcome='sending' AND a.attempted_at > datetime('now','-120 seconds')) AS busy
-                    FROM timesheet t JOIN employee e ON e.id=t.employee_id
-                    JOIN delivery_attempt a ON a.sync_id=t.sync_id AND a.slot=?
-                    WHERE t.{backend} IS NULL AND t.{skipped} IS NULL AND a.outcome != 'resolved'
-                    AND t.deleted_at IS NULL AND t.status='success'
-                    AND COALESCE(t.excluded_from_sync,0)=0 {extra}
-                    ORDER BY t.date,t.time,t.id""", params).fetchall()
-                rows.extend(dict(row) for row in found)
-            if filters.get('state') in ('failed', 'unconfirmed'):
-                rows = [r for r in rows if r['state'] == filters['state']]
-            return sorted(rows, key=lambda r: (r['date'], r['time'], r['id'], r['slot']))
+            rows = conn.execute(query + " SELECT * FROM scoped WHERE (?='all' OR state=?) ORDER BY date,time,id,slot",
+                                [*params, state, state]).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            conn.close()
+
+    def get_retry_queue_page(self, filters=None):
+        """Aggregate in SQLite and return at most 100 rows, never the whole queue."""
+        query, params, state = self._retry_query(filters)
+        filters = filters or {}
+        page, size, mode = filters.get('page', 1), filters.get('page_size', 25), filters.get('mode', 'employees')
+        if type(page) is not int or page < 1 or type(size) is not int or not 1 <= size <= 100:
+            raise ValueError('Invalid page; page size must be between 1 and 100')
+        if mode not in ('employees', 'logs'):
+            raise ValueError('Invalid queue view')
+        conn = self.get_connection()
+        try:
+            # Counts and displayed rows come from the same database snapshot.
+            conn.execute('BEGIN')
+            counts = {r['state']: r['n'] for r in conn.execute(query +
+                ' SELECT state, COUNT(*) AS n FROM scoped GROUP BY state', params)}
+            chosen = query + ", chosen AS (SELECT * FROM scoped WHERE (?='all' OR state=?))"
+            selected_params = [*params, state, state]
+            summary = dict(conn.execute(chosen + """ SELECT COUNT(*) AS uploads,
+                COUNT(DISTINCT employee_id) AS employees, COALESCE(SUM(busy=0),0) AS available FROM chosen""", selected_params).fetchone())
+            total = summary['employees'] if mode == 'employees' else summary['uploads']
+            page = min(page, max(1, (total + size - 1) // size))
+            if mode == 'employees':
+                sql = """SELECT employee_id, employee_name, employee_code,
+                    COUNT(*) AS uploads, COUNT(DISTINCT id) AS logs,
+                    MIN(date) AS first_date, MAX(date) AS last_date,
+                    COUNT(DISTINCT COALESCE(reason,'')) AS issue_count, MIN(reason) AS reason,
+                    SUM(busy=0) AS available
+                    FROM chosen GROUP BY employee_id,employee_name,employee_code
+                    ORDER BY uploads DESC, employee_name COLLATE NOCASE, employee_id LIMIT ? OFFSET ?"""
+            else:
+                sql = 'SELECT * FROM chosen ORDER BY date DESC,time DESC,id DESC,slot LIMIT ? OFFSET ?'
+            rows = [dict(r) for r in conn.execute(chosen + ' ' + sql, [*selected_params, size, (page-1)*size])]
+            return {'rows': rows, 'total': total, 'page': page, 'page_size': size,
+                    'counts': {'failed': counts.get('failed', 0), 'unconfirmed': counts.get('unconfirmed', 0)}, **summary}
+        finally:
+            conn.close()
+
+    def get_retry_selection(self, filters=None):
+        """Freeze explicit bulk selection for review; never silently truncate it."""
+        query, params, state = self._retry_query(filters)
+        conn = self.get_connection()
+        try:
+            rows = conn.execute(query + """ SELECT * FROM scoped WHERE (?='all' OR state=?)
+                AND busy=0 ORDER BY date,time,id,slot LIMIT 10001""", [*params, state, state]).fetchall()
+            if len(rows) > 10000:
+                raise ValueError('More than 10,000 uploads match. Narrow the dates or employees before retrying.')
+            return [dict(row) for row in rows]
         finally:
             conn.close()
 

@@ -170,3 +170,16 @@ def test_attendance_request_does_not_follow_redirects(seeded):
     assert svc.session.post.call_args.kwargs['allow_redirects'] is False
     assert svc.session.post.call_count == 1
     assert not db.get_unsynced_timesheets(slot=1)
+
+
+def test_bulk_review_snapshot_does_not_include_new_arrivals(seeded):
+    db, row = seeded
+    db.claim_delivery([row], 1)
+    db.mark_timesheet_sync_failed(row, 'Rejected', 1)
+    snapshot = db.get_retry_selection({'state': 'failed'})
+    employee = db.get_all_timesheets()[0]['employee_id']
+    arriving = db.add_timesheet_entry('new-after-review', employee, 'in', '2026-08-24', '09:00')
+    db.claim_delivery([arriving], 1)
+    db.mark_timesheet_sync_failed(arriving, 'Rejected', 1)
+    scope = db.validate_retry_selection({'filters': {'state': 'failed'}, 'items': [{'id': r['id'], 'slot': r['slot']} for r in snapshot]})
+    assert scope == {1: {row}}

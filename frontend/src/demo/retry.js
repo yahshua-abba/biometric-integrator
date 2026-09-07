@@ -5,6 +5,8 @@ import Demo from './RetryDemo.vue'
 import bridge from '../services/bridge'
 import { request } from './api'
 bridge.whenReady = async () => {}
+bridge.getRetryQueuePage = filters => request('getRetryQueuePage', filters)
+bridge.getRetrySelection = filters => request('getRetrySelection', filters)
 bridge.getRetryQueue = filters => request('getRetryQueue', filters)
 bridge.retryTimesheets = async payload => {
   const result = await request('retryTimesheets', payload)

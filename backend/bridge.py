@@ -116,6 +116,20 @@ class Bridge(QObject):
             return json.dumps({'success': False, 'error': str(exc)})
 
     @pyqtSlot(str, result=str)
+    def getRetryQueuePage(self, filters_json):
+        try:
+            return json.dumps({'success': True, 'data': self.database.get_retry_queue_page(json.loads(filters_json))})
+        except Exception as exc:
+            return json.dumps({'success': False, 'error': str(exc)})
+
+    @pyqtSlot(str, result=str)
+    def getRetrySelection(self, filters_json):
+        try:
+            return json.dumps({'success': True, 'data': self.database.get_retry_selection(json.loads(filters_json))})
+        except Exception as exc:
+            return json.dumps({'success': False, 'error': str(exc)})
+
+    @pyqtSlot(str, result=str)
     def retryTimesheets(self, payload_json):
         try:
             payload = json.loads(payload_json)
