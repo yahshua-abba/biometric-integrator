@@ -154,7 +154,8 @@
           title="Mark selected records as do-not-sync"
         >
           <svg class="w-5 h-5 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636m12.728 12.728L5.636 5.636" />
+            <circle cx="12" cy="12" r="9" stroke-width="2" />
+            <path d="M5.64 5.64 18.36 18.36" stroke-linecap="round" stroke-width="2" />
           </svg>
           Mark Do Not Sync
         </button>
@@ -401,7 +402,8 @@
                     :title="entry.excluded_from_sync ? 'Restore — allow syncing' : 'Mark as do-not-sync'"
                   >
                     <svg v-if="!entry.excluded_from_sync" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728L5.636 5.636" />
+                      <circle cx="12" cy="12" r="9" stroke-width="2" />
+                      <path d="M5.64 5.64 18.36 18.36" stroke-linecap="round" stroke-width="2" />
                     </svg>
                     <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
