@@ -9,6 +9,11 @@ from zk import ZK
 
 logger = logging.getLogger(__name__)
 
+# Scheduled pulls reach back to the device's last successful pull (minus an
+# overlap), so punches made while the PC was off are not missed; never further
+# than this many days.
+CATCH_UP_MAX_DAYS = 31
+
 
 class PullService:
     """Service for pulling attendance data from ZKTeco device"""
@@ -205,7 +210,7 @@ class PullService:
         if date_from:
             start_date = datetime.strptime(date_from, "%Y-%m-%d")
         else:
-            start_date = datetime.now() - timedelta(days=1)
+            start_date = self._catch_up_start(device)
 
         if date_to:
             end_date = datetime.strptime(date_to, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
@@ -360,6 +365,16 @@ class PullService:
             )
 
             return False, str(e), stats
+
+    @staticmethod
+    def _catch_up_start(device):
+        now = datetime.now()
+        start = now - timedelta(days=1)
+        try:
+            last_pull = datetime.fromisoformat(str((device or {}).get('last_pull_at')))
+        except ValueError:
+            return start
+        return max(min(start, last_pull - timedelta(hours=1)), now - timedelta(days=CATCH_UP_MAX_DAYS))
 
     def get_device_users(self):
         """Get list of users from ZKTeco device"""

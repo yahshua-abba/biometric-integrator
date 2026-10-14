@@ -156,9 +156,13 @@ def test_cleanup_keeps_old_records_that_need_manual_review(seeded):
     assert len(db.get_retry_queue()) == 1
     db.mark_timesheet_synced(row, row, 1)
     scheduler.run_cleanup()
+    assert db.get_all_timesheets()  # still waiting for its first upload to destination 2
+    db.mark_timesheet_synced(row, row, 2)
+    scheduler.run_cleanup()
     assert not db.get_all_timesheets()
     conn = db.get_connection()
-    assert conn.execute('SELECT COUNT(*) FROM delivery_attempt').fetchone()[0] == 1
+    # The delivery ledger outlives the attendance row for both destinations.
+    assert conn.execute("SELECT COUNT(*) FROM delivery_attempt WHERE outcome='resolved'").fetchone()[0] == 2
     conn.close()
 
 

@@ -155,21 +155,7 @@ class SyncScheduler:
         try:
             cutoff_date = (datetime.now() - timedelta(days=CLEANUP_DAYS)).strftime("%Y-%m-%d")
 
-            conn = self.database.get_connection()
-            cursor = conn.cursor()
-
-            # Keep unresolved delivery attempts available for HR review. The
-            # separate delivery ledger also survives cleanup of resolved rows.
-            cursor.execute("""
-                DELETE FROM timesheet
-                WHERE date < ?
-                AND NOT EXISTS (SELECT 1 FROM delivery_attempt a
-                    WHERE a.sync_id=timesheet.sync_id AND a.outcome != 'resolved')
-            """, (cutoff_date,))
-
-            deleted_count = cursor.rowcount
-            conn.commit()
-            conn.close()
+            deleted_count = self.database.cleanup_old_timesheets(cutoff_date)
 
             # Log the cleanup event
             message = f"Auto-cleanup: deleted {deleted_count} records older than {cutoff_date}"

@@ -5,6 +5,7 @@ Service for pushing timesheet data to cloud payroll systems
 
 import requests
 import logging
+from urllib3.exceptions import NewConnectionError
 from datetime import datetime
 import json
 import threading
@@ -382,6 +383,13 @@ class PushService:
                     stats['batches_completed'] += 1
                     logger.info(f"Batch {batch_num} completed: {len(logs_synced)} synced, {len(logs_failed)} failed")
 
+                elif result.get('not_sent'):
+                    # Nothing reached Payroll; keep these for the next automatic run.
+                    batch_error = result.get('error', 'Unknown error')
+                    logger.error(f"Batch {batch_num} not sent: {batch_error} - stopping")
+                    self.database.release_delivery([r['id'] for r in batch], self.slot, batch_error)
+                    break
+
                 else:
                     # Batch-level failure (network error, timeout) - STOP immediately
                     batch_error = result.get('error', 'Unknown error')
@@ -497,6 +505,10 @@ class PushService:
             if result.get('rejected'):
                 self._record_rejection(entry, error, stats)
                 continue
+            if result.get('not_sent'):
+                logger.error(f"Resend of timesheet {entry['id']} not sent: {error} - stopping")
+                self.database.release_delivery([r['id'] for r in batch[index:]], self.slot, error)
+                return error
             # Connection or server trouble: stop like a normal batch failure.
             logger.error(f"Resend of timesheet {entry['id']} failed: {error} - stopping")
             for position, pending in enumerate(batch[index:]):
@@ -548,8 +560,11 @@ class PushService:
                 allow_redirects=False
             )
 
-            data = response.json()
-            logger.info(f"YAHSHUA response: {json.dumps(data)}")
+            try:
+                data = response.json()
+            except ValueError:
+                data = None  # e.g. an HTML error page from a proxy
+            logger.info(f"YAHSHUA response: HTTP {response.status_code} {json.dumps(data) if data is not None else response.text[:200]}")
 
             if response.status_code == 200:
                 if not isinstance(data, dict):
@@ -562,22 +577,27 @@ class PushService:
                 if isinstance(data, dict) and (data.get('logs_successfully_sync') or data.get('logs_not_sync')):
                     return True, data
                 # Payroll refused the whole request; records are safe to resend one at a time.
-                return False, {'error': get_friendly_rejection(data), 'unconfirmed': False, 'rejected': True}
+                return False, {'error': get_friendly_rejection(data if data is not None else ''), 'unconfirmed': False, 'rejected': True}
 
             elif response.status_code == 401:
                 # Prepare authentication for the next explicit attempt, never resend here.
                 self.database.update_push_token(None, slot=self.slot)
-                return False, {'error': get_friendly_http_error(401), 'unconfirmed': False}
+                return False, {'error': get_friendly_http_error(401), 'unconfirmed': False, 'not_sent': True}
 
             else:
                 friendly = get_friendly_http_error(response.status_code)
                 logger.error(f"Push batch failed: HTTP {response.status_code} - {response.text[:200]}")
                 return False, {'error': friendly, 'unconfirmed': not (400 <= response.status_code < 500) or response.status_code == 408}
 
+        except requests.exceptions.ConnectTimeout:
+            return False, {'error': 'Cannot connect to the payroll server - check your internet connection', 'not_sent': True}
         except requests.exceptions.Timeout:
             return False, {'error': 'Request timed out - the payroll server took too long to respond'}
-        except requests.exceptions.ConnectionError:
-            return False, {'error': 'Cannot connect to the payroll server - check your internet connection'}
+        except requests.exceptions.ConnectionError as e:
+            # Only a failed connect (no internet, DNS, refused) proves nothing was sent.
+            reason = getattr(e.args[0], 'reason', None) if e.args else None
+            return False, {'error': 'Cannot connect to the payroll server - check your internet connection',
+                           'not_sent': isinstance(reason, NewConnectionError)}
         except Exception as e:
             return False, {'error': str(e)}
 
