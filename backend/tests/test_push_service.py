@@ -243,3 +243,99 @@ class TestPushData:
         db.mark_timesheet_sync_failed.assert_called_once()
         failed_args = db.mark_timesheet_sync_failed.call_args[0]
         assert failed_args[0] == 2
+
+
+# ---------------------------------------------------------------------------
+# Whole-batch rejections (LCG, Oct 2026: one employee code matched two employees,
+# Payroll answered with a bare string, and every later batch was never sent)
+# ---------------------------------------------------------------------------
+
+DUPLICATE_EMPLOYEE = "get() returned more than one Employee -- it returned 2!"
+
+
+def make_queue(ids):
+    db = MagicMock()
+    db.get_push_token.return_value = 'valid-token'
+    db.create_sync_log.return_value = 1
+    db.get_unsynced_timesheets.return_value = [
+        {'id': i, 'employee_code': f'E{i}', 'time': '08:00', 'log_type': 'in',
+         'sync_id': f'ZK_1_{i}_20261007080000', 'date': '2026-10-07', 'branch_id': None}
+        for i in ids
+    ]
+    return make_service(db), db
+
+
+class TestRejectedBatch:
+    def test_push_batch_plain_string_400_is_a_readable_rejection(self, mocker):
+        svc = make_service()
+        mocker.patch.object(svc.session, 'post', return_value=mock_response(400, DUPLICATE_EMPLOYEE))
+
+        success, result = svc.push_batch('token', [{'id': 1}])
+
+        assert success is False
+        assert result['rejected'] is True and result['unconfirmed'] is False
+        assert 'More than one employee' in result['error']
+
+    def test_push_batch_plain_string_200_is_unconfirmed_not_a_crash(self, mocker):
+        svc = make_service()
+        mocker.patch.object(svc.session, 'post', return_value=mock_response(200, 'OK'))
+
+        success, result = svc.push_batch('token', [{'id': 1}])
+
+        assert success is False
+        assert result['unconfirmed'] is True and not result.get('rejected')
+
+    def test_rejected_batch_is_resent_singly_and_later_batches_still_go(self, mocker):
+        """One bad employee fails alone; the rest of its batch and the next batch sync."""
+        svc, db = make_queue(range(1, 53))  # batches of 50 + 2
+
+        def payroll(token, log_list):
+            ids = [r['id'] for r in log_list]
+            if 7 in ids and len(ids) > 1:
+                return False, {'error': 'More than one employee', 'unconfirmed': False, 'rejected': True}
+            if ids == [7]:
+                return False, {'error': 'More than one employee', 'unconfirmed': False, 'rejected': True}
+            return True, {'logs_successfully_sync': ids, 'logs_not_sync': []}
+
+        push = mocker.patch.object(svc, 'push_batch', side_effect=payroll)
+
+        success, message, stats = svc.push_data()
+
+        assert success is True
+        assert stats['success'] == 51 and stats['failed'] == 1
+        assert push.call_count == 1 + 50 + 1
+        db.mark_timesheet_sync_failed.assert_called_once_with(7, 'More than one employee', slot=1)
+
+    def test_single_record_rejection_does_not_stop_the_run(self, mocker):
+        svc, db = make_queue(range(1, 52))  # batch 2 holds only record 51
+
+        def payroll(token, log_list):
+            ids = [r['id'] for r in log_list]
+            if ids == [51]:
+                return False, {'error': 'Bad employee', 'unconfirmed': False, 'rejected': True}
+            return True, {'logs_successfully_sync': ids, 'logs_not_sync': []}
+
+        mocker.patch.object(svc, 'push_batch', side_effect=payroll)
+        success, message, stats = svc.push_data()
+
+        assert success is True
+        assert stats['success'] == 50 and stats['failed'] == 1
+        assert stats['batches_completed'] == 2
+
+    def test_connection_loss_during_resend_stops_and_marks_the_rest(self, mocker):
+        svc, db = make_queue([1, 2, 3])
+        responses = iter([
+            (False, {'error': 'rejected', 'unconfirmed': False, 'rejected': True}),
+            (True, {'logs_successfully_sync': [1], 'logs_not_sync': []}),
+            (False, {'error': 'Cannot connect', 'unconfirmed': True}),
+        ])
+        mocker.patch.object(svc, 'push_batch', side_effect=lambda t, l: next(responses))
+
+        success, message, stats = svc.push_data()
+
+        assert success is False and 'Cannot connect' in message
+        assert stats['success'] == 1 and stats['failed'] == 2
+        db.mark_timesheet_sync_failed.assert_has_calls([
+            call(2, 'Cannot connect', slot=1, unconfirmed=True),
+            call(3, 'Cannot connect', slot=1, unconfirmed=False),
+        ])

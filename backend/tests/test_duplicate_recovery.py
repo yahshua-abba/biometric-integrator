@@ -82,14 +82,15 @@ def test_unrelated_errors_are_not_discarded(reason):
 
 
 @pytest.mark.parametrize('slot', [1, 2])
-def test_401_waits_for_manual_retry_before_partial_success(seeded, slot):
+def test_401_never_reached_payroll_so_the_next_run_sends_it(seeded, slot):
+    # Token auth rejects before Payroll reads the logs, so no review is needed.
     db, row = seeded
     svc = service(db, slot)
-    svc.session.post = Mock(side_effect=[reply(401), reply(400, [row])])
-    assert svc.push_data()[2]['failed'] == 1
-    svc.push_data()
-    assert svc.session.post.call_count == 1
-    assert svc.push_data(timesheet_ids=[row], manual_retry=True)[2]['success'] == 1
+    svc.session.post = Mock(side_effect=[reply(401), reply(200, [row])])
+    stats = svc.push_data()[2]
+    assert stats['failed'] == 0 and not db.get_retry_queue()
+    assert svc.push_data()[2]['success'] == 1
+    assert svc.session.post.call_count == 2
     assert not db.get_retry_queue()
 
 

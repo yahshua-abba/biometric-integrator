@@ -571,6 +571,34 @@ class Database:
         finally:
             conn.close()
 
+    def release_delivery(self, ids, slot=1, error_message=None):
+        """Undo claims for records that never reached Payroll (no internet, expired login).
+
+        First attempts go back to the automatic queue as if never tried. Manual
+        retries keep their place in the Retry Queue with the new reason.
+        """
+        if not ids:
+            return
+        _, _, error_col = _slot_cols(slot)
+        conn = self.get_connection()
+        try:
+            with conn:
+                for row_id in ids:
+                    sync_id = conn.execute('SELECT sync_id FROM timesheet WHERE id=?', (row_id,)).fetchone()
+                    if not sync_id:
+                        continue
+                    first = conn.execute("""DELETE FROM delivery_attempt WHERE sync_id=? AND slot=?
+                        AND outcome='sending' AND attempts=1""", (sync_id[0], slot)).rowcount
+                    if first:
+                        conn.execute(f'UPDATE timesheet SET {error_col}=NULL WHERE id=?', (row_id,))
+                    else:
+                        conn.execute(f'UPDATE timesheet SET {error_col}=? WHERE id=?',
+                                     (f'Not sent: {error_message}', row_id))
+                        conn.execute("""UPDATE delivery_attempt SET outcome='failed'
+                            WHERE sync_id=? AND slot=? AND outcome='sending'""", (sync_id[0], slot))
+        finally:
+            conn.close()
+
     def _finish_delivery(self, conn, timesheet_id, slot, outcome):
         conn.execute("""UPDATE delivery_attempt SET outcome=? WHERE slot=? AND sync_id=
             (SELECT sync_id FROM timesheet WHERE id=?)""", (outcome, slot, timesheet_id))
@@ -792,6 +820,29 @@ class Database:
             AND t.deleted_at IS NULL
             AND NOT EXISTS (SELECT 1 FROM delivery_attempt a
                             WHERE a.sync_id=t.sync_id AND a.slot={slot})"""
+
+    def cleanup_old_timesheets(self, cutoff_date):
+        """Delete attendance older than cutoff_date (YYYY-MM-DD); returns rows deleted.
+
+        Kept: punches still waiting for their first upload, and unresolved
+        deliveries HR must review. Every deleted punch leaves a resolved entry in
+        the delivery ledger so pulling the same old range again never re-uploads it.
+        """
+        config = self.get_api_config() or {}
+        slots = [1, 2] if config.get('push_enabled_2') else [1]
+        waiting = ' OR '.join(f'({self._new_upload_condition(slot)})' for slot in slots)
+        old = f"""FROM timesheet t WHERE t.date < ? AND NOT ({waiting})
+            AND NOT EXISTS (SELECT 1 FROM delivery_attempt a
+                WHERE a.sync_id=t.sync_id AND a.outcome != 'resolved')"""
+        conn = self.get_connection()
+        try:
+            with conn:
+                for slot in (1, 2):
+                    conn.execute(f"""INSERT OR IGNORE INTO delivery_attempt(sync_id, slot, attempted_at, outcome)
+                        SELECT t.sync_id, ?, datetime('now'), 'resolved' {old}""", (slot, cutoff_date))
+                return conn.execute(f'DELETE FROM timesheet WHERE id IN (SELECT t.id {old})', (cutoff_date,)).rowcount
+        finally:
+            conn.close()
 
     def get_timesheet_stats(self):
         """Count disjoint states across enabled destinations; skipped is not uploaded."""
