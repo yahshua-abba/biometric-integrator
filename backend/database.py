@@ -10,7 +10,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 import logging
-from services.sync_errors import is_duplicate_error
+from services.sync_errors import is_duplicate_error, is_definite_rejection
 
 logger = logging.getLogger(__name__)
 
@@ -396,6 +396,14 @@ class Database:
                              THEN 'resolved' ELSE 'unconfirmed' END
                     FROM timesheet WHERE {backend} IS NOT NULL OR {skipped} IS NOT NULL
                         OR {error} IS NOT NULL""", (slot,))
+                # Older builds didn't record why a log failed. Ones Payroll clearly
+                # rejected (e.g. "No Employee") were never stored, so HR can retry
+                # them without the "check Payroll first" step.
+                rows = cursor.execute(f"""SELECT a.sync_id, t.{error} FROM delivery_attempt a
+                    JOIN timesheet t ON t.sync_id=a.sync_id
+                    WHERE a.slot=? AND a.outcome='unconfirmed'""", (slot,)).fetchall()
+                cursor.executemany("UPDATE delivery_attempt SET outcome='failed' WHERE sync_id=? AND slot=?",
+                                   [(sync_id, slot) for sync_id, reason in rows if is_definite_rejection(reason)])
 
             # Migrate existing device config from api_config to device table
             cursor.execute("SELECT COUNT(*) as count FROM device")

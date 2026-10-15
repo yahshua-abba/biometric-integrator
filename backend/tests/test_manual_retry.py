@@ -187,3 +187,46 @@ def test_bulk_review_snapshot_does_not_include_new_arrivals(seeded):
     db.mark_timesheet_sync_failed(arriving, 'Rejected', 1)
     scope = db.validate_retry_selection({'filters': {'state': 'failed'}, 'items': [{'id': r['id'], 'slot': r['slot']} for r in snapshot]})
     assert scope == {1: {row}}
+
+
+def _as_old_build(db, row, reason):
+    """A failure saved by v1.0.20 or earlier: an error message and no delivery ledger."""
+    conn = db.get_connection()
+    with conn:
+        conn.execute('DELETE FROM delivery_attempt')
+        conn.execute('UPDATE timesheet SET sync_error_message=? WHERE id=?', (reason, row))
+    conn.close()
+
+
+@pytest.mark.parametrize('reason', ['No Employee', 'Employee not found in payroll system', 'Branch not found'])
+def test_upgrade_makes_old_payroll_rejections_plain_failures(seeded, reason):
+    db, row = seeded
+    _as_old_build(db, row, reason)
+    upgraded = Database(str(db.db_path))
+    [item] = [i for i in upgraded.get_retry_queue() if i['slot'] == 1]
+    assert item['state'] == 'failed'
+    retry = upgraded.validate_retry_selection({'items': [{'id': row, 'slot': 1}], 'filters': {}})
+    assert retry == {1: {row}}  # no "I checked Payroll" step needed
+
+
+@pytest.mark.parametrize('reason', ['Request timed out - the payroll server took too long to respond',
+                                    "'str' object has no attribute 'get'",
+                                    'Payroll server error - please try again later'])
+def test_upgrade_keeps_uncertain_old_failures_unconfirmed(seeded, reason):
+    db, row = seeded
+    _as_old_build(db, row, reason)
+    upgraded = Database(str(db.db_path))
+    [item] = [i for i in upgraded.get_retry_queue() if i['slot'] == 1]
+    assert item['state'] == 'unconfirmed'
+
+
+def test_pcs_already_on_the_september_build_are_fixed_too(seeded):
+    db, row = seeded
+    _as_old_build(db, row, 'No Employee')
+    conn = db.get_connection()
+    with conn:  # what the Sep 7 build's upgrade wrote
+        conn.execute("INSERT INTO delivery_attempt(sync_id,slot,attempted_at,outcome) "
+                     "SELECT sync_id,1,datetime('now'),'unconfirmed' FROM timesheet WHERE id=?", (row,))
+    conn.close()
+    upgraded = Database(str(db.db_path))
+    assert [i['state'] for i in upgraded.get_retry_queue() if i['slot'] == 1] == ['failed']
