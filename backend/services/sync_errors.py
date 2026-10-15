@@ -15,3 +15,27 @@ def is_duplicate_error(error_code, reason):
         return True
     message = (reason or '').strip().lower()
     return bool(re.match(r'^(duplicate record\b|time in range\b|sync id already exists\b)', message))
+
+
+# Per-record answers where Payroll looked at the log and said no, so nothing was
+# stored and HR can retry without checking Payroll first. Matches the reason
+# text older builds saved (raw Payroll reason or its friendly message).
+DEFINITE_REJECTIONS = {
+    'no employee',
+    'invalid request format',
+    'missing required field',
+    'invalid date format',
+    'invalid time format',
+    'invalid employee code',
+    'branch not found',
+    'employee not found in payroll system',
+    'employee is inactive',
+    'employee not assigned to branch',
+    'employee not recognized in payroll system',
+    'invalid log type',
+    'record outside allowed date range',
+}
+
+
+def is_definite_rejection(reason):
+    return (reason or '').strip().lower() in DEFINITE_REJECTIONS
