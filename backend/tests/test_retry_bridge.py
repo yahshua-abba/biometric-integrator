@@ -71,3 +71,13 @@ def test_bridge_paged_queue_and_frozen_bulk_selection(seeded, bridge_class):
     selection = json.loads(bridge.getRetrySelection(json.dumps({'state': 'failed'})))
     assert selection['success'] and [r['id'] for r in selection['data']] == [row]
     assert not json.loads(bridge.getRetryQueuePage('{"page_size":10000}'))['success']
+
+
+def test_clear_synced_keeps_logs_payroll_2_still_needs(seeded, bridge_class):
+    db, row = seeded
+    db.claim_delivery([row], 1)
+    db.mark_timesheet_synced(row, row, slot=1)
+    bridge = bridge_class(db, None, Mock(slot=1))
+    result = json.loads(bridge.clearTimesheets('2026-08-24', '2026-08-24', True))
+    assert result['success'] and result['deleted_count'] == 0
+    assert [r['id'] for r in db.get_unsynced_timesheets(slot=2)] == [row]

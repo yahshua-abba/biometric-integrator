@@ -445,7 +445,21 @@ class TestOutages:
         app.push.push_data()
         assert payroll.stored == {key: 1}
 
-    def test_expired_login_keeps_logs_automatic_and_logs_in_again_next_run(self, app, payroll):
+    def test_expired_login_logs_in_again_and_sends_in_the_same_run(self, app, payroll):
+        key = self._one_punch(app)
+        app.db.update_push_token('stale-token')
+        original = payroll._sync
+
+        def expired_once(log_list):
+            payroll._sync = original
+            return response(401, {'detail': 'Invalid token.'})
+        payroll._sync = expired_once
+        ok, _, stats = app.push.push_data()
+        assert ok and stats['success'] == 1
+        assert payroll.stored == {key: 1} and payroll.logins == 1
+        assert app.attempt(key)['outcome'] == 'resolved'
+
+    def test_login_refused_even_after_logging_in_again_keeps_logs_automatic(self, app, payroll):
         key = self._one_punch(app)
         app.db.update_push_token('stale-token')
         payroll.outage = 'expired'
@@ -454,7 +468,7 @@ class TestOutages:
         assert app.db.get_push_token() is None
         payroll.outage = None
         app.push.push_data()
-        assert payroll.stored == {key: 1} and payroll.logins == 1
+        assert payroll.stored == {key: 1} and payroll.logins == 2
 
     def test_timeout_after_sending_goes_to_review_not_resent_automatically(self, app, payroll):
         key = self._one_punch(app)
@@ -530,6 +544,25 @@ class TestExclusions:
         app.push.push_data()
         assert payroll.stored == {}
 
+    def test_do_not_sync_leaves_logs_already_sent_alone(self, tmp_path, devices):
+        p1, p2 = FakePayroll(employees=['101']), FakePayroll(employees=['101'])
+        app = App(tmp_path, devices, p1, p2)
+        sent, waiting = TODAY.replace(hour=7), TODAY.replace(hour=9)
+        device = FakeDevice([punch('101', sent)])
+        dev = app.add_device('Lobby', '10.0.0.1', device)
+        app.scheduler.run_pull_sync()
+        app.scheduler.run_push_sync()
+        device.logs.append(punch('101', waiting))
+        app.scheduler.run_pull_sync()
+        day = TODAY.strftime('%Y-%m-%d')
+        assert app.db.set_timesheets_excluded([app.row(sid(dev, '101', sent))['id']], True) == 0
+        assert app.db.set_timesheets_excluded_by_date_range(day, day, True) == 1
+        assert not app.row(sid(dev, '101', sent))['excluded_from_sync']
+        # Payroll 2 switched on later with all history still gets the log Payroll 1 has.
+        app.db.update_api_config(push_enabled_2=1, push_username_2='hr2', push_password_2='x')
+        app.scheduler.run_push_sync()
+        assert set(p2.stored) == {sid(dev, '101', sent)}
+
 
 # ===========================================================================
 # 6. Two Payroll destinations
@@ -579,6 +612,35 @@ class TestTwoDestinations:
         app.scheduler.run_pull_sync()
         app.scheduler.run_push_sync()
         assert set(p2.stored) == {sid(dev, '101', new_time)}
+
+    def test_turning_payroll_2_back_on_keeps_its_failed_logs_in_review(self, dual):
+        app, p1, p2 = dual
+        dev = app.add_device('Lobby', '10.0.0.1', FakeDevice([punch('101', TODAY)]))
+        app.scheduler.run_pull_sync()
+        p2.employees.clear()  # Payroll 2 answers "No Employee"
+        app.scheduler.run_push_sync()
+        key = sid(dev, '101', TODAY)
+        assert app.attempt(key, 2)['outcome'] == 'failed'
+        # Off, then on again without sending old history.
+        app.db.update_api_config(push_enabled_2=0)
+        app.db.baseline_slot_as_synced(2)
+        app.db.update_api_config(push_enabled_2=1)
+        assert app.row(key)['backend_timesheet_id_2'] is None
+        assert [i['state'] for i in app.db.get_retry_queue({'slot': 2})] == ['failed']
+        assert app.db.get_timesheet_stats()['synced'] == 0
+
+    def test_clearing_synced_logs_keeps_ones_payroll_2_still_needs(self, dual):
+        app, p1, p2 = dual
+        dev = app.add_device('Lobby', '10.0.0.1', FakeDevice([punch('101', TODAY)]))
+        app.scheduler.run_pull_sync()
+        p2.outage = 'no_internet'
+        app.scheduler.run_push_sync()
+        day = TODAY.strftime('%Y-%m-%d')
+        assert app.db.clear_timesheets(day, day, only_synced=True) == 0
+        p2.outage = None
+        app.scheduler.run_push_sync()
+        assert p2.stored == {sid(dev, '101', TODAY): 1}
+        assert app.db.clear_timesheets(day, day, only_synced=True) == 1
 
 
 # ===========================================================================
@@ -642,6 +704,33 @@ class TestCleanup:
     def test_old_failed_log_stays_for_hr(self, app, payroll):
         key, _ = self._old_row(app, user='999')
         app.push.push_data()
+        app.scheduler.run_cleanup()
+        assert key in app.rows()
+
+    def _fail_for_payroll_2(self, app, key):
+        row_id = app.row(key)['id']
+        app.db.claim_delivery([row_id], 2)
+        app.db.mark_timesheet_sync_failed(row_id, 'No Employee', slot=2)
+
+    def test_payroll_2_switched_on_without_a_login_does_not_stop_cleanup(self, app, payroll):
+        key, _ = self._old_row(app)
+        app.push.push_data()
+        app.db.update_api_config(push_enabled_2=1)  # never logged in, so nothing is ever sent there
+        app.scheduler.run_cleanup()
+        assert key not in app.rows()
+
+    def test_old_failure_for_a_switched_off_payroll_2_does_not_block_cleanup(self, app, payroll):
+        key, _ = self._old_row(app)
+        app.push.push_data()
+        self._fail_for_payroll_2(app, key)  # while Payroll 2 was on
+        app.scheduler.run_cleanup()
+        assert key not in app.rows()
+
+    def test_old_failure_for_payroll_2_stays_while_it_is_on(self, app, payroll):
+        key, _ = self._old_row(app)
+        app.push.push_data()
+        app.db.update_api_config(push_enabled_2=1, push_username_2='hr2', push_password_2='x')
+        self._fail_for_payroll_2(app, key)
         app.scheduler.run_cleanup()
         assert key in app.rows()
 

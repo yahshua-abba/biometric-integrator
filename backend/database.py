@@ -68,10 +68,20 @@ class Database:
         self.init_database()
 
     def get_connection(self):
-        """Get database connection with row factory"""
-        conn = sqlite3.connect(str(self.db_path))
+        """Get database connection with row factory.
+
+        Both Payroll destinations save results at the same time, so a writer
+        waits up to 30 seconds for the other instead of failing after an upload
+        Payroll already accepted.
+        """
+        conn = sqlite3.connect(str(self.db_path), timeout=30)
         conn.row_factory = sqlite3.Row
         return conn
+
+    def active_push_slots(self):
+        """Destinations that receive uploads: Payroll 1 always, Payroll 2 once switched on with an account."""
+        config = self.get_api_config() or {}
+        return [1, 2] if config.get('push_enabled_2') and config.get('push_username_2') else [1]
 
     def init_database(self):
         """Create all tables and indexes"""
@@ -79,6 +89,9 @@ class Database:
         cursor = conn.cursor()
 
         try:
+            # Readers (screens, the Retry Queue) never block upload results from saving.
+            cursor.execute('PRAGMA journal_mode=WAL')
+
             # Company table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS company (
@@ -389,9 +402,13 @@ class Database:
             for slot in (1, 2):
                 backend, synced, error = _slot_cols(slot)
                 skipped = 'sync_skipped_reason_2' if slot == 2 else 'sync_skipped_reason'
+                # Older builds never saved when a failed upload was tried; an empty
+                # time says so instead of showing the upgrade moment.
                 cursor.execute(f"""INSERT OR IGNORE INTO delivery_attempt
                     (sync_id, slot, attempted_at, outcome)
-                    SELECT sync_id, ?, COALESCE({synced}, CURRENT_TIMESTAMP),
+                    SELECT sync_id, ?,
+                        CASE WHEN {backend} IS NOT NULL OR {skipped} IS NOT NULL
+                             THEN COALESCE({synced}, CURRENT_TIMESTAMP) ELSE '' END,
                         CASE WHEN {backend} IS NOT NULL OR {skipped} IS NOT NULL
                              THEN 'resolved' ELSE 'unconfirmed' END
                     FROM timesheet WHERE {backend} IS NOT NULL OR {skipped} IS NOT NULL
@@ -635,8 +652,7 @@ class Database:
         search = filters.get('search', '')
         if not isinstance(search, str) or len(search) > 100:
             raise ValueError('Search must be at most 100 characters')
-        config = self.get_api_config() or {}
-        slots = [1, 2] if config.get('push_enabled_2') and config.get('push_username_2') else [1]
+        slots = self.active_push_slots()
         clauses, params = [], []
         for slot in slots:
             backend, _, error = _slot_cols(slot)
@@ -793,7 +809,9 @@ class Database:
 
         Used when a second push destination is enabled later, so historical logs
         are not retroactively flooded to it. Sets a sentinel backend id (-1) on
-        every not-yet-synced, non-deleted record for that slot. Returns rows updated.
+        every not-yet-synced, non-deleted record for that slot. Logs this
+        destination already tried and has not settled stay in the Retry Queue.
+        Returns rows updated.
         """
         backend_col, synced_col, error_col = _slot_cols(slot)
         skipped_col = 'sync_skipped_reason_2' if int(slot) == 2 else 'sync_skipped_reason'
@@ -808,7 +826,9 @@ class Database:
                 WHERE {backend_col} IS NULL
                 AND {skipped_col} IS NULL
                 AND deleted_at IS NULL
-            """, (datetime.now(),))
+                AND NOT EXISTS (SELECT 1 FROM delivery_attempt a
+                    WHERE a.sync_id=timesheet.sync_id AND a.slot=? AND a.outcome != 'resolved')
+            """, (datetime.now(), int(slot)))
             conn.commit()
             return cursor.rowcount
         except Exception as e:
@@ -833,15 +853,16 @@ class Database:
         """Delete attendance older than cutoff_date (YYYY-MM-DD); returns rows deleted.
 
         Kept: punches still waiting for their first upload, and unresolved
-        deliveries HR must review. Every deleted punch leaves a resolved entry in
-        the delivery ledger so pulling the same old range again never re-uploads it.
+        deliveries HR must review, for destinations that are switched on. Every
+        deleted punch leaves a resolved entry in the delivery ledger so pulling
+        the same old range again never re-uploads it.
         """
-        config = self.get_api_config() or {}
-        slots = [1, 2] if config.get('push_enabled_2') else [1]
+        slots = self.active_push_slots()
         waiting = ' OR '.join(f'({self._new_upload_condition(slot)})' for slot in slots)
         old = f"""FROM timesheet t WHERE t.date < ? AND NOT ({waiting})
             AND NOT EXISTS (SELECT 1 FROM delivery_attempt a
-                WHERE a.sync_id=t.sync_id AND a.outcome != 'resolved')"""
+                WHERE a.sync_id=t.sync_id AND a.outcome != 'resolved'
+                AND a.slot IN ({','.join(str(s) for s in slots)}))"""
         conn = self.get_connection()
         try:
             with conn:
@@ -854,8 +875,7 @@ class Database:
 
     def get_timesheet_stats(self):
         """Count disjoint states across enabled destinations; skipped is not uploaded."""
-        config = self.get_api_config() or {}
-        slots = [1, 2] if config.get('push_enabled_2') and config.get('push_username_2') else [1]
+        slots = self.active_push_slots()
         synced, resolved, errors = [], [], []
         for slot in slots:
             backend, _, error = _slot_cols(slot)
@@ -910,14 +930,43 @@ class Database:
         finally:
             conn.close()
 
+    def clear_timesheets(self, date_from, date_to, only_synced=True):
+        """Soft-delete records in a date range; returns rows deleted.
+
+        Soft deletes keep the sync_id, so the device cannot supply the same log
+        again on a future pull. With only_synced, a record is cleared only once
+        every switched-on destination has it.
+        """
+        synced = ' AND '.join(f'{_slot_cols(slot)[0]} IS NOT NULL' for slot in self.active_push_slots())
+        conn = self.get_connection()
+        try:
+            with conn:
+                return conn.execute(f"""
+                    UPDATE timesheet SET deleted_at = ?
+                    WHERE date >= ? AND date <= ? AND deleted_at IS NULL
+                    {f'AND {synced}' if only_synced else ''}
+                """, (datetime.now(), date_from, date_to)).rowcount
+        finally:
+            conn.close()
+
+    def _still_to_deliver_condition(self):
+        """Match rows a switched-on destination has not yet stored or skipped as a duplicate."""
+        parts = []
+        for slot in self.active_push_slots():
+            backend, _, _ = _slot_cols(slot)
+            skipped = 'sync_skipped_reason_2' if slot == 2 else 'sync_skipped_reason'
+            parts.append(f'({backend} IS NULL AND {skipped} IS NULL)')
+        return ' OR '.join(parts)
+
     def set_timesheets_excluded(self, ids, excluded):
         """Mark or unmark a list of timesheet IDs as excluded from sync.
 
-        Exclude pending delivery to either destination, including partially synced rows.
-        Returns the number of rows updated.
+        Only rows a switched-on destination still needs, including partially
+        synced rows. Returns the number of rows updated.
         """
         if not ids:
             return 0
+        still_to_deliver = self._still_to_deliver_condition()
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
@@ -926,7 +975,7 @@ class Database:
                 UPDATE timesheet
                 SET excluded_from_sync = ?
                 WHERE id IN ({placeholders})
-                AND (backend_timesheet_id IS NULL OR backend_timesheet_id_2 IS NULL)
+                AND ({still_to_deliver})
                 AND deleted_at IS NULL
             """, (1 if excluded else 0, *ids))
             conn.commit()
@@ -941,16 +990,18 @@ class Database:
     def set_timesheets_excluded_by_date_range(self, date_from, date_to, excluded):
         """Mark or unmark all unsynced timesheets within a date range as excluded from sync.
 
-        Rows delivered to both destinations and soft-deleted rows are not modified. Returns the number of rows updated.
+        Rows every switched-on destination already has, and soft-deleted rows,
+        are not modified. Returns the number of rows updated.
         """
+        still_to_deliver = self._still_to_deliver_condition()
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
-            cursor.execute("""
+            cursor.execute(f"""
                 UPDATE timesheet
                 SET excluded_from_sync = ?
                 WHERE date >= ? AND date <= ?
-                AND (backend_timesheet_id IS NULL OR backend_timesheet_id_2 IS NULL)
+                AND ({still_to_deliver})
                 AND deleted_at IS NULL
             """, (1 if excluded else 0, date_from, date_to))
             conn.commit()
@@ -994,8 +1045,7 @@ class Database:
 
     def get_all_timesheets(self, limit=1000, offset=0):
         """Get all timesheet entries with pagination"""
-        config = self.get_api_config() or {}
-        slots = [1, 2] if config.get('push_enabled_2') and config.get('push_username_2') else [1]
+        slots = self.active_push_slots()
         new_uploads = ' + '.join(f'CASE WHEN {self._new_upload_condition(slot)} THEN 1 ELSE 0 END' for slot in slots)
         conn = self.get_connection()
         cursor = conn.cursor()

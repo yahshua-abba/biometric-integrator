@@ -97,6 +97,7 @@ class PushService:
     def __init__(self, database, slot=1):
         self.database = database
         self._push_lock = threading.Lock()
+        self._token = None  # login token for the run in progress
         self.slot = int(slot)
         self.suffix = '_2' if self.slot == 2 else ''
         self.label = "Payroll 2 (Secondary)" if self.slot == 2 else "Payroll 1 (Primary)"
@@ -232,7 +233,7 @@ class PushService:
     def push_data(self, progress_callback=None, timesheet_ids=None, manual_retry=False):
         """Serialize manual and scheduled uploads sharing this destination service."""
         if not self._push_lock.acquire(blocking=False):
-            return False, f'{self.label}: a sync is already running', {
+            return False, 'A sync is already running', {
                 'processed': 0, 'success': 0, 'failed': 0, 'skipped': 0,
                 'duplicates': 0, 'batches_completed': 0, 'batches_total': 0, 'reasons': {}
             }
@@ -293,7 +294,7 @@ class PushService:
                 )
                 return True, message, stats
 
-            token = self.get_valid_token()
+            self._token = self.get_valid_token()
 
             # Build log_list for all valid records
             all_log_entries = []
@@ -363,7 +364,7 @@ class PushService:
                 if not batch:
                     continue
                 # Push batch to YAHSHUA
-                success, result = self.push_batch(token, batch)
+                success, result = self._send(batch)
 
                 if not success and result.get('rejected'):
                     # Payroll refused the whole request (e.g. one employee code matches two
@@ -372,7 +373,7 @@ class PushService:
                         self._record_rejection(batch[0], result['error'], stats)
                     else:
                         logger.warning(f"Batch {batch_num} rejected ({result['error']}) - resending {len(batch)} records one at a time")
-                        batch_error = self._push_one_at_a_time(token, batch, stats)
+                        batch_error = self._push_one_at_a_time(batch, stats)
                         if batch_error:
                             break
                     stats['batches_completed'] += 1
@@ -494,10 +495,10 @@ class PushService:
         stats['failed'] += 1
         stats['reasons'][error] = stats['reasons'].get(error, 0) + 1
 
-    def _push_one_at_a_time(self, token, batch, stats):
+    def _push_one_at_a_time(self, batch, stats):
         """Resend a rejected batch record by record. Returns an error only if sending must stop."""
         for index, entry in enumerate(batch):
-            success, result = self.push_batch(token, [entry])
+            success, result = self._send([entry])
             if success:
                 self._apply_batch_result([entry], result, stats)
                 continue
@@ -509,17 +510,29 @@ class PushService:
                 logger.error(f"Resend of timesheet {entry['id']} not sent: {error} - stopping")
                 self.database.release_delivery([r['id'] for r in batch[index:]], self.slot, error)
                 return error
-            # Connection or server trouble: stop like a normal batch failure.
+            # Connection or server trouble: this record may have reached Payroll;
+            # the rest never left, so they go back to the automatic queue.
             logger.error(f"Resend of timesheet {entry['id']} failed: {error} - stopping")
-            for position, pending in enumerate(batch[index:]):
-                self.database.mark_timesheet_sync_failed(
-                    pending['id'], error, slot=self.slot,
-                    unconfirmed=result.get('unconfirmed', True) if position == 0 else False
-                )
-                stats['failed'] += 1
-            stats['reasons'][error] = stats['reasons'].get(error, 0) + len(batch) - index
+            self.database.mark_timesheet_sync_failed(
+                entry['id'], error, slot=self.slot, unconfirmed=result.get('unconfirmed', True))
+            stats['failed'] += 1
+            stats['reasons'][error] = stats['reasons'].get(error, 0) + 1
+            if batch[index + 1:]:
+                self.database.release_delivery([r['id'] for r in batch[index + 1:]], self.slot, error)
             return error
         return None
+
+    def _send(self, log_list):
+        """Send one request; if the login expired, log in again with the saved account and resend once."""
+        success, result = self.push_batch(self._token, log_list)
+        if not result.get('auth_expired'):
+            return success, result
+        logger.warning(f"YAHSHUA login expired ({self.label}) - logging in again")
+        try:
+            self._token = self.authenticate()['token']
+        except Exception as e:
+            return False, {'error': str(e), 'unconfirmed': False, 'not_sent': True}
+        return self.push_batch(self._token, log_list)
 
     def push_batch(self, token, log_list):
         """
@@ -580,9 +593,10 @@ class PushService:
                 return False, {'error': get_friendly_rejection(data if data is not None else ''), 'unconfirmed': False, 'rejected': True}
 
             elif response.status_code == 401:
-                # Prepare authentication for the next explicit attempt, never resend here.
+                # Payroll stored nothing. Drop the token; _send logs in again and resends once.
                 self.database.update_push_token(None, slot=self.slot)
-                return False, {'error': get_friendly_http_error(401), 'unconfirmed': False, 'not_sent': True}
+                return False, {'error': get_friendly_http_error(401), 'unconfirmed': False,
+                               'not_sent': True, 'auth_expired': True}
 
             else:
                 friendly = get_friendly_http_error(response.status_code)
