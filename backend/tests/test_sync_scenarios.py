@@ -512,6 +512,35 @@ class TestOutages:
         app.push.push_data()
         assert len(payroll.stored) == 120 and set(payroll.stored.values()) == {1}
 
+    def test_connection_drop_while_resending_singly_requeues_what_never_left(self, tmp_path, devices):
+        payroll = FakePayroll(employees=['101', '555'], shared_ids=['555'])
+        app = App(tmp_path, devices, payroll)
+        punches = [('101', 1), ('555', 2), ('101', 3), ('101', 4)]
+        dev = app.add_device('Lobby', '10.0.0.1', FakeDevice([punch(u, TODAY.replace(hour=h, minute=0, second=0)) for u, h in punches]))
+        app.pull.pull_data(date_from=TODAY.strftime('%Y-%m-%d'))
+        keys = [sid(dev, u, TODAY.replace(hour=h, minute=0, second=0)) for u, h in punches]
+        original = payroll._sync
+        on_the_wire = []
+
+        def drops_on_first_single_resend(log_list):
+            if len(log_list) == 1 and not on_the_wire:
+                on_the_wire.append(log_list[0]['sync_id'])
+                raise requests.exceptions.ReadTimeout()
+            return original(log_list)
+        payroll._sync = drops_on_first_single_resend
+        ok, _, _ = app.push.push_data()  # the shared Biometrics ID refuses the whole batch
+        assert not ok
+        [lost] = on_the_wire
+        assert app.attempt(lost)['outcome'] == 'unconfirmed'
+        never_left = [key for key in keys if key != lost]
+        assert all(app.attempt(key) is None for key in never_left)
+        assert set(app.pending()) == set(never_left)  # back in the automatic queue
+        payroll._sync = original
+        app.push.push_data()
+        for key in never_left:  # the next run sends them; the shared-ID punch is refused again
+            assert payroll.stored.get(key) == (None if '_555_' in key else 1)
+        assert lost not in payroll.stored and app.attempt(lost)['outcome'] == 'unconfirmed'
+
     def test_wrong_password_leaves_logs_waiting(self, app, payroll):
         key = self._one_punch(app)
         payroll.post = None
