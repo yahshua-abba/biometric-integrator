@@ -211,13 +211,41 @@ def test_upgrade_makes_old_payroll_rejections_plain_failures(seeded, reason):
 
 @pytest.mark.parametrize('reason', ['Request timed out - the payroll server took too long to respond',
                                     "'str' object has no attribute 'get'",
-                                    'Payroll server error - please try again later'])
+                                    'Payroll server error - please try again later',
+                                    # v1.0.20 resent failed logs on every run, so a refusal of
+                                    # the whole last request says nothing about earlier tries:
+                                    # one of those may have timed out after Payroll stored the log.
+                                    'Bad request',
+                                    'Login failed: Invalid credentials',
+                                    'Access denied - insufficient permissions'])
 def test_upgrade_keeps_uncertain_old_failures_unconfirmed(seeded, reason):
     db, row = seeded
     _as_old_build(db, row, reason)
     upgraded = Database(str(db.db_path))
     [item] = [i for i in upgraded.get_retry_queue() if i['slot'] == 1]
     assert item['state'] == 'unconfirmed'
+
+
+def test_upgrade_does_not_invent_an_attempt_time_for_old_failures(seeded):
+    db, row = seeded
+    _as_old_build(db, row, 'No Employee')
+    upgraded = Database(str(db.db_path))
+    [item] = [i for i in upgraded.get_retry_queue() if i['slot'] == 1]
+    assert item['attempted_at'] == ''  # older builds never saved when they tried
+
+
+def test_a_long_read_does_not_block_saving_upload_results(seeded):
+    """The Retry Queue page holds a read open while both destinations save results."""
+    db, row = seeded
+    reader = db.get_connection()
+    try:
+        reader.execute('BEGIN')
+        reader.execute('SELECT COUNT(*) FROM timesheet').fetchone()
+        assert db.claim_delivery([row], 1) == [row]
+        db.mark_timesheet_synced(row, row, slot=1)
+    finally:
+        reader.close()
+    assert db.get_all_timesheets()[0]['backend_timesheet_id'] == row
 
 
 def test_pcs_already_on_the_september_build_are_fixed_too(seeded):

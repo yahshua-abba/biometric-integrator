@@ -174,43 +174,9 @@ class Bridge(QObject):
 
     @pyqtSlot(str, str, bool, result=str)
     def clearTimesheets(self, date_from, date_to, only_synced=True):
-        """Clear timesheet records within a date range.
-
-        All deleted records are soft-deleted (deleted_at set) regardless of
-        whether they were synced. This preserves the sync_id in the database so
-        the biometric device cannot re-supply the same log on a future pull —
-        the UNIQUE constraint on sync_id blocks re-insertion and the record
-        never re-enters the push queue.
-        """
+        """Clear timesheet records within a date range (soft delete; see Database.clear_timesheets)."""
         try:
-            conn = self.database.get_connection()
-            cursor = conn.cursor()
-            now = datetime.now()
-
-            if only_synced:
-                # Soft-delete only synced records
-                cursor.execute("""
-                    UPDATE timesheet
-                    SET deleted_at = ?
-                    WHERE date >= ? AND date <= ?
-                    AND backend_timesheet_id IS NOT NULL
-                    AND deleted_at IS NULL
-                """, (now, date_from, date_to))
-            else:
-                # Soft-delete all records (synced and unsynced).
-                # Unsynced records are also soft-deleted so that a re-pull from
-                # the device does not bring them back — once deleted, they stay gone.
-                cursor.execute("""
-                    UPDATE timesheet
-                    SET deleted_at = ?
-                    WHERE date >= ? AND date <= ?
-                    AND deleted_at IS NULL
-                """, (now, date_from, date_to))
-
-            deleted_count = cursor.rowcount
-            conn.commit()
-            conn.close()
-
+            deleted_count = self.database.clear_timesheets(date_from, date_to, only_synced)
             filter_text = "synced " if only_synced else ""
             logger.info(f"Cleared {deleted_count} {filter_text}timesheet records from {date_from} to {date_to}")
             return json.dumps({

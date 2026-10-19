@@ -60,7 +60,7 @@
               <template v-else>
                 <td class="p-3 whitespace-nowrap text-xs">{{ row.date }}<div class="text-gray-500 mt-1">{{ row.time }} · {{ row.log_type.toUpperCase() }}</div></td>
                 <td class="p-3 whitespace-nowrap text-xs">Payroll {{ row.slot }}</td>
-                <td class="p-3 max-w-lg text-xs"><span v-if="row.busy" class="text-gray-500">Awaiting confirmation…</span><details v-else><summary class="cursor-pointer text-gray-700">{{ row.state === 'failed' ? 'Failed' : 'Unconfirmed' }} · {{ shortReason(row.reason) }}</summary><div class="mt-2 space-y-1 text-gray-500"><p>{{ row.reason || 'No confirmation was saved. Check Payroll first.' }}</p><p>Last attempt: {{ row.attempted_at }} UTC · {{ row.attempts }} attempt(s)</p></div></details></td>
+                <td class="p-3 max-w-lg text-xs"><span v-if="row.busy" class="text-gray-500">Awaiting confirmation…</span><details v-else><summary class="cursor-pointer text-gray-700">{{ row.state === 'failed' ? 'Failed' : 'Unconfirmed' }} · {{ shortReason(row.reason) }}</summary><div class="mt-2 space-y-1 text-gray-500"><p>{{ row.reason || 'No confirmation was saved. Check Payroll first.' }}</p><p>Last attempt: {{ row.attempted_at ? `${row.attempted_at} UTC` : 'not recorded (sent by an older version)' }} · {{ row.attempts }} attempt(s)</p></div></details></td>
               </template>
             </tr>
           </tbody>

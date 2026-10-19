@@ -37,6 +37,14 @@ describe('scalable Retry Queue', () => {
     await button('← Employees').trigger('click'); await flushPromises()
     expect(bridge.getRetryQueuePage).toHaveBeenLastCalledWith(expect.objectContaining({ employee_ids: [], mode: 'employees' }))
   })
+  it('says when an older app version did not record the attempt time', async () => {
+    await show()
+    bridge.getRetryQueuePage.mockResolvedValue({ data: summary([{ ...base, id: 1, attempted_at: '' }]) })
+    await button('View logs').trigger('click'); await flushPromises()
+    const details = wrapper.find('tbody details').text()
+    expect(details).toContain('Last attempt: not recorded (sent by an older version)')
+    expect(details).not.toContain(' UTC')
+  })
   it('reviews the selected employee scope and freezes exact upload IDs', async () => {
     await show()
     await wrapper.find('tbody input').setValue(true)

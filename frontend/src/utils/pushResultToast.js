@@ -66,6 +66,11 @@ export function showPushResultToasts(result, { success, error, info }) {
       const base = showLabel ? `${label}: ${f} failed` : `${f} record${f === 1 ? '' : 's'} failed`
       const reason = summarizeReasons(cfg.stats && cfg.stats.reasons)
       failedParts.push(reason ? `${base} — ${reason}` : base)
+    } else if (cfg.success === false) {
+      // The run stopped before any record failed (expired login, no internet,
+      // another sync running): say why, or the user never hears about it.
+      const why = cfg.message || 'Push failed'
+      failedParts.push(showLabel ? `${label}: ${why}` : why)
     }
   }
 

@@ -322,7 +322,7 @@ class TestRejectedBatch:
         assert stats['success'] == 50 and stats['failed'] == 1
         assert stats['batches_completed'] == 2
 
-    def test_connection_loss_during_resend_stops_and_marks_the_rest(self, mocker):
+    def test_connection_loss_during_resend_stops_and_requeues_the_unsent_rest(self, mocker):
         svc, db = make_queue([1, 2, 3])
         responses = iter([
             (False, {'error': 'rejected', 'unconfirmed': False, 'rejected': True}),
@@ -334,8 +334,30 @@ class TestRejectedBatch:
         success, message, stats = svc.push_data()
 
         assert success is False and 'Cannot connect' in message
-        assert stats['success'] == 1 and stats['failed'] == 2
-        db.mark_timesheet_sync_failed.assert_has_calls([
-            call(2, 'Cannot connect', slot=1, unconfirmed=True),
-            call(3, 'Cannot connect', slot=1, unconfirmed=False),
+        assert stats['success'] == 1 and stats['failed'] == 1
+        # Record 2 was on the wire when the connection dropped; record 3 never left.
+        db.mark_timesheet_sync_failed.assert_called_once_with(2, 'Cannot connect', slot=1, unconfirmed=True)
+        db.release_delivery.assert_called_once_with([3], 1, 'Cannot connect')
+
+
+class TestExpiredLogin:
+    def test_expired_login_logs_in_again_and_resends_once(self, mocker):
+        svc, db = make_queue([1])
+        responses = iter([
+            (False, {'error': 'Authentication expired', 'unconfirmed': False, 'not_sent': True, 'auth_expired': True}),
+            (True, {'logs_successfully_sync': [1], 'logs_not_sync': []}),
         ])
+        push = mocker.patch.object(svc, 'push_batch', side_effect=lambda t, l: next(responses))
+        mocker.patch.object(svc, 'authenticate', return_value={'token': 'fresh-token'})
+
+        success, message, stats = svc.push_data()
+
+        assert success is True and stats['success'] == 1
+        assert [c.args[0] for c in push.call_args_list] == ['valid-token', 'fresh-token']
+        db.release_delivery.assert_not_called()
+
+    def test_push_batch_flags_an_expired_login(self, mocker):
+        svc = make_service()
+        mocker.patch.object(svc.session, 'post', return_value=mock_response(401, {}))
+        success, result = svc.push_batch('expired', [{'id': 1}])
+        assert not success and result['not_sent'] and result['auth_expired']
