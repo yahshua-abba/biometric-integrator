@@ -313,7 +313,7 @@
                   Synced
                 </span>
                 <span v-else-if="combinedStatus(entry) === 'duplicate'" class="badge bg-gray-100 text-gray-700" :title="statusTitle(entry)">
-                  Duplicate skipped
+                  {{ deletedInPayroll(entry) ? 'Deleted in Payroll' : 'Duplicate skipped' }}
                 </span>
                 <span
                   v-else-if="combinedStatus(entry) === 'excluded'"
@@ -472,10 +472,14 @@ const errorLines = (entry) => {
   return lines
 }
 
+// Unconfirmed resends skipped because HR deleted the log in Payroll (approved Delete request).
+const deletedInPayroll = (entry) => activeSlots.value.some(slot =>
+  (slot === 2 ? entry.sync_skipped_reason_2 : entry.sync_skipped_reason)?.startsWith('Deleted in Payroll'))
+
 // Tooltip describing each destination when the second one is active.
 const statusTitle = (entry) => {
   if (!config2Active.value) {
-    if (entry.sync_skipped_reason) return `Duplicate skipped — ${entry.sync_skipped_reason}. Will not retry.`
+    if (entry.sync_skipped_reason) return entry.sync_skipped_reason.startsWith('Deleted in Payroll') ? entry.sync_skipped_reason : `Duplicate skipped — ${entry.sync_skipped_reason}. Will not retry.`
     return entry.backend_timesheet_id ? `Backend ID: ${entry.backend_timesheet_id}` : (entry.sync_error_message || '')
   }
   const describe = (slot) => {

@@ -104,8 +104,25 @@ class FakePayroll:
         self.outage = None
         self.logins = 0
         self.lock = threading.Lock()
+        self.delete_requests = []  # approved Delete time-log requests
+        self.requests_readable = True
+        self.request_reads = 0
+
+    def hr_deletes(self, sync_id, employee, when, kind='in', via_request=True):
+        """HR hides a stored log; via_request mimics an approved Delete time-log request."""
+        self.stored.pop(sync_id, None)
+        if via_request:
+            self.delete_requests.append({
+                'action_type': 'Delete', 'status': 'approved', 'log_type': kind.capitalize(),
+                'employee': {'employeeid': str(employee)}, 'date': when.strftime('%Y-%m-%d'),
+                'existing_time': when.strftime('%H:%M:00'), 'time_from': when.strftime('%H:%M:00')})
 
     def post(self, url, json=None, **kwargs):
+        if url.endswith('/time_log_requests/read/'):
+            self.request_reads += 1
+            if not self.requests_readable:
+                return response(403, {'detail': 'You do not have permission to perform this action.'})
+            return response(200, {'count': len(self.delete_requests), 'records': list(self.delete_requests)})
         if url.endswith('/api-auth/'):
             if self.outage == 'no_internet':
                 raise no_internet()
@@ -183,6 +200,14 @@ class App:
 
     def pending(self, slot=1):
         return [r['sync_id'] for r in self.db.get_unsynced_timesheets(limit=100000, slot=slot)]
+
+    def age_attempts(self, minutes):
+        """Pretend the last upload attempts happened this many minutes ago."""
+        conn = self.db.get_connection()
+        with conn:
+            conn.execute("UPDATE delivery_attempt SET attempted_at=datetime(attempted_at, ?)",
+                         (f'-{int(minutes)} minutes',))
+        conn.close()
 
 
 def sid(device_id, user_id, when):
@@ -778,3 +803,146 @@ class TestCleanup:
         app.pull.pull_data(date_from=day, date_to=day)
         app.push.push_data()
         assert payroll.stored == {}
+
+
+# ===========================================================================
+# 9. Unconfirmed uploads: one automatic re-check, never restoring HR deletions
+# ===========================================================================
+
+class TestUnconfirmedRecheck:
+    """The 9402 case (Oct 28): Unconfirmed upload, HR deletes it, a resend restored it."""
+
+    def _dropped(self, app, payroll, arrived=True, user='101', when=TODAY):
+        """Upload one punch; the connection drops before Payroll's answer comes back."""
+        dev = app.add_device('Lobby', '10.0.0.1', FakeDevice([punch(user, when)]))
+        app.pull.pull_data()
+        key = sid(dev, user, when)
+        original = payroll._sync
+
+        def drop(log_list):
+            payroll._sync = original
+            if arrived:
+                original(log_list)
+            raise requests.exceptions.ConnectionError('Remote end closed connection without response')
+        payroll._sync = drop
+        app.push.push_data()
+        assert app.attempt(key)['outcome'] == 'unconfirmed'
+        return key
+
+    def test_next_run_clears_a_log_payroll_already_has(self, app, payroll):
+        key = self._dropped(app, payroll, arrived=True)
+        app.age_attempts(20)
+        app.push.push_data()
+        assert app.attempt(key)['outcome'] == 'resolved'
+        assert payroll.stored == {key: 1} and app.db.get_retry_queue() == []
+
+    def test_next_run_sends_a_log_that_never_arrived(self, app, payroll):
+        key = self._dropped(app, payroll, arrived=False)
+        app.age_attempts(20)
+        app.push.push_data()
+        assert payroll.stored == {key: 1}
+        assert app.row(key)['backend_timesheet_id'] is not None
+
+    def test_recheck_waits_for_a_later_run(self, app, payroll):
+        self._dropped(app, payroll)
+        sent = len(payroll.requests)
+        app.push.push_data()  # straight after the drop
+        assert len(payroll.requests) == sent
+
+    def test_recheck_happens_only_once(self, app, payroll):
+        key = self._dropped(app, payroll, arrived=False)
+        app.age_attempts(20)
+        payroll.outage = 'timeout'  # the re-check drops too
+        app.push.push_data()
+        payroll.outage = None
+        app.age_attempts(20)
+        sent = len(payroll.requests)
+        app.push.push_data()
+        assert len(payroll.requests) == sent
+        assert app.attempt(key)['outcome'] == 'unconfirmed' and app.attempt(key)['attempts'] == 2
+
+    def test_old_unconfirmed_logs_are_left_for_hr(self, app, payroll):
+        key = self._dropped(app, payroll)
+        app.age_attempts(3 * 60)
+        sent = len(payroll.requests)
+        app.push.push_data()
+        assert len(payroll.requests) == sent and app.attempt(key)['outcome'] == 'unconfirmed'
+
+    def test_9402_hr_retry_does_not_restore_a_log_deleted_through_a_request(self, app, payroll):
+        when = TODAY.replace(hour=11, minute=4, second=21)
+        key = self._dropped(app, payroll, user='9402', when=when)
+        payroll.employees.add('9402')
+        payroll.hr_deletes(key, '9402', when, kind='in')
+        row = app.row(key)
+        ok, message, stats = app.push.push_data(timesheet_ids=[row['id']], manual_retry=True)
+        assert payroll.stored == {}
+        assert stats['deleted_in_payroll'] == 1 and 'deleted in Payroll' in message
+        assert app.attempt(key)['outcome'] == 'resolved'
+        assert 'Deleted in Payroll' in app.row(key)['sync_skipped_reason']
+        assert app.db.get_retry_queue() == []
+
+    def test_automatic_recheck_does_not_restore_a_log_deleted_through_a_request(self, app, payroll):
+        key = self._dropped(app, payroll)
+        payroll.hr_deletes(key, '101', TODAY, kind='in')
+        app.age_attempts(20)
+        app.push.push_data()
+        assert payroll.stored == {} and app.attempt(key)['outcome'] == 'resolved'
+
+    def test_night_shift_deletion_dated_the_day_before_still_matches(self, app, payroll):
+        after_midnight = TODAY.replace(hour=1, minute=15, second=9)
+        key = self._dropped(app, payroll, when=after_midnight)
+        payroll.stored.pop(key)
+        payroll.delete_requests.append({
+            'action_type': 'Delete', 'status': 'approved', 'log_type': 'In',
+            'employee': {'employeeid': '101'},
+            'date': (after_midnight - timedelta(days=1)).strftime('%Y-%m-%d'),
+            'existing_time': '01:15:00'})
+        app.age_attempts(20)
+        app.push.push_data()
+        assert payroll.stored == {}
+
+    @pytest.mark.parametrize('other', [
+        {'employee': {'employeeid': '102'}},           # another employee
+        {'existing_time': '08:01:00'},                 # another minute
+        {'log_type': 'Out'},                           # the other punch type
+        {'action_type': 'Edit'},                       # not a deletion
+    ])
+    def test_unrelated_requests_do_not_block_the_resend(self, app, payroll, other):
+        when = TODAY.replace(hour=8, minute=0, second=30)
+        key = self._dropped(app, payroll, arrived=False, when=when)
+        request = {'action_type': 'Delete', 'status': 'approved', 'log_type': 'In',
+                   'employee': {'employeeid': '101'}, 'date': when.strftime('%Y-%m-%d'),
+                   'existing_time': '08:00:00'}
+        request.update(other)
+        payroll.delete_requests.append(request)
+        app.age_attempts(20)
+        app.push.push_data()
+        assert payroll.stored == {key: 1}
+
+    def test_failed_logs_are_retried_without_reading_requests(self, app, payroll):
+        dev = app.add_device('Lobby', '10.0.0.1', FakeDevice([punch('777', TODAY)]))
+        app.pull.pull_data()
+        app.push.push_data()
+        payroll.employees.add('777')
+        row = app.row(sid(dev, '777', TODAY))
+        app.push.push_data(timesheet_ids=[row['id']], manual_retry=True)
+        assert payroll.request_reads == 0 and payroll.stored == {row['sync_id']: 1}
+
+    def test_automatic_recheck_holds_back_when_requests_cannot_be_read(self, app, payroll):
+        key = self._dropped(app, payroll, arrived=False)
+        payroll.requests_readable = False
+        app.age_attempts(20)
+        app.push.push_data()
+        assert payroll.stored == {} and app.attempt(key)['outcome'] == 'unconfirmed'
+
+    def test_hr_retry_holds_back_and_says_why_when_requests_cannot_be_read(self, app, payroll):
+        key = self._dropped(app, payroll, arrived=True)
+        payroll.hr_deletes(key, '101', TODAY, kind='in')
+        payroll.requests_readable = False
+        ok, message, stats = app.push.push_data(timesheet_ids=[app.row(key)['id']], manual_retry=True)
+        assert not ok and "Couldn't check Payroll" in message
+        assert payroll.stored == {} and app.attempt(key)['outcome'] == 'unconfirmed'
+        # Once Payroll can be read again, the same retry is screened and skipped.
+        payroll.requests_readable = True
+        app.push.push_data(timesheet_ids=[app.row(key)['id']], manual_retry=True)
+        assert payroll.stored == {} and app.attempt(key)['outcome'] == 'resolved'

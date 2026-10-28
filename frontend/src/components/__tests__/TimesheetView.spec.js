@@ -46,6 +46,13 @@ describe('per-destination duplicate status', () => {
     expect(wrapper.findAll('tbody tr')).toHaveLength(0)
   })
 
+  it('labels a resend skipped because HR deleted the log in Payroll', async () => {
+    const row = await show({ sync_skipped_reason_2: 'Deleted in Payroll (approved Delete request) - will not be sent' })
+    expect(row.text()).toContain('Deleted in Payroll')
+    expect(row.text()).not.toContain('Duplicate skipped')
+    expect(row.find('[title="Retry sync"]').exists()).toBe(false)
+  })
+
   it('allows Do Not Sync when primary succeeded but secondary is pending', async () => {
     const row = await show({ sync_error_message_2: 'Connection failed' })
     expect(row.text()).toContain('Failed')
