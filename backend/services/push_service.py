@@ -6,7 +6,7 @@ Service for pushing timesheet data to cloud payroll systems
 import requests
 import logging
 from urllib3.exceptions import NewConnectionError
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import threading
 from services.sync_errors import is_duplicate_error
@@ -15,6 +15,16 @@ logger = logging.getLogger(__name__)
 
 # YAHSHUA API endpoints (default, can be overridden via config)
 DEFAULT_YAHSHUA_BASE_URL = "https://yahshuapayroll.com/api"
+
+# Unconfirmed uploads younger than this are re-checked once automatically.
+RECHECK_WITHIN_HOURS = 2
+DELETED_IN_PAYROLL = 'Deleted in Payroll (approved Delete request) - will not be sent'
+
+def _same_id(code):
+    """Compare employee IDs the way people read them: "0123" and "123" are one person."""
+    code = code.strip()
+    return code.lstrip('0') or code if code.isdigit() else code
+
 
 # User-friendly messages for YAHSHUA error codes
 YAHSHUA_ERROR_MESSAGES = {
@@ -98,6 +108,7 @@ class PushService:
         self.database = database
         self._push_lock = threading.Lock()
         self._token = None  # login token for the run in progress
+        self._prior_outcomes = {}  # resend id -> outcome before this try
         self.slot = int(slot)
         self.suffix = '_2' if self.slot == 2 else ''
         self.label = "Payroll 2 (Secondary)" if self.slot == 2 else "Payroll 1 (Primary)"
@@ -238,11 +249,106 @@ class PushService:
                 'duplicates': 0, 'batches_completed': 0, 'batches_total': 0, 'reasons': {}
             }
         try:
-            return self._push_data(progress_callback, timesheet_ids, manual_retry)
+            result = self._push_data(progress_callback, timesheet_ids, manual_retry)
+            if not timesheet_ids and result[0]:
+                self._recheck_unconfirmed(result[2])
+            return result
         finally:
             self._push_lock.release()
 
-    def _push_data(self, progress_callback=None, timesheet_ids=None, manual_retry=False):
+    def _recheck_unconfirmed(self, stats):
+        """Resend recent Unconfirmed uploads once, so HR only sees what is still unclear."""
+        ids = self.database.get_recheck_candidates(self.slot, RECHECK_WITHIN_HOURS)
+        if not ids:
+            return
+        logger.info(f"Re-checking {len(ids)} unconfirmed upload(s) ({self.label})")
+        _, message, recheck = self._push_data(timesheet_ids=ids, manual_retry=True, automatic=True)
+        logger.info(f"Re-check finished: {message}")
+        for key in ('success', 'failed', 'duplicates', 'deleted_in_payroll'):
+            stats[key] = stats.get(key, 0) + recheck.get(key, 0)
+        for reason, count in recheck.get('reasons', {}).items():
+            stats['reasons'][reason] = stats['reasons'].get(reason, 0) + count
+
+    def fetch_approved_deletions(self, dates):
+        """Approved Delete requests in Payroll covering these punch dates.
+
+        Returns a set of (employee ID, date, in/out, HH:MM) keys, or None when
+        Payroll's requests could not be read. A request's date is the shift
+        date, so a night shift's morning Out may fall on the following day. Dates are
+        read in windows of a week so a large retry stays a few small requests.
+        """
+        days = sorted({datetime.strptime(d, '%Y-%m-%d') for d in dates})
+        windows = []
+        for day in days:
+            if windows and day - windows[-1][0] < timedelta(days=7):
+                windows[-1][1] = day
+            else:
+                windows.append([day, day])
+        records = []
+        try:
+            for first, last in windows:
+                response = self.session.post(
+                    f"{self.get_base_url()}/time_log_requests/read/",
+                    headers={'Authorization': f'Token {self._token}'},
+                    json={'status': 'approved',
+                          'applied_date_from': (first - timedelta(days=1)).strftime('%Y-%m-%d'),
+                          'applied_date_to': last.strftime('%Y-%m-%d')},
+                    timeout=60, allow_redirects=False)
+                page = response.json().get('records') if response.status_code == 200 else None
+                if not isinstance(page, list):
+                    raise ValueError(f'HTTP {response.status_code}')
+                records.extend(page)
+        except Exception as e:
+            logger.warning(f"Could not read Payroll's approved Delete requests ({self.label}): {e}")
+            return None
+        deletions = set()
+        for req in records:
+            try:
+                if str(req.get('action_type')).lower() != 'delete':
+                    continue
+                code = _same_id(str((req.get('employee') or {}).get('employeeid') or ''))
+                when = str(req.get('existing_time') or req.get('time_from') or '')[:5]
+                day = datetime.strptime(str(req['date'])[:10], '%Y-%m-%d')
+                kind = str(req.get('log_type') or '').lower()
+            except (KeyError, TypeError, ValueError):
+                continue
+            if code and when and kind in ('in', 'out'):
+                deletions.add((code, day.strftime('%Y-%m-%d'), kind, when))
+                # A night shift's Out after midnight is filed under the shift's start
+                # date. Only that case reaches into the next day, so a deleted 08:00 In
+                # never blocks the next morning's real 08:00 In.
+                if kind == 'out' and when < '12:00':
+                    deletions.add((code, (day + timedelta(days=1)).strftime('%Y-%m-%d'), kind, when))
+        return deletions
+
+    def _screen_payroll_deletions(self, rows, stats, automatic):
+        """Drop resends of Unconfirmed logs that HR has since deleted in Payroll.
+
+        Failed uploads were never stored, so only Unconfirmed ones can be a
+        deleted log. Returns the rows that may be sent.
+        """
+        maybe_stored = [r for r in rows if self._prior_outcomes.get(r['id']) == 'unconfirmed']
+        if not maybe_stored:
+            return rows
+        deletions = self.fetch_approved_deletions({r['date'] for r in maybe_stored})
+        if deletions is None:
+            # Without the lookup a resend could restore an HR deletion (the 9402 case),
+            # even after HR's "I checked" tick, so hold these back until it works again.
+            reason = "Couldn't check Payroll for deleted logs - try again later"
+            logger.warning(f"Holding back {len(maybe_stored)} unconfirmed upload(s): {reason} ({self.label})")
+            stats['reasons'][reason] = stats['reasons'].get(reason, 0) + len(maybe_stored)
+            held = {r['id'] for r in maybe_stored}
+            return [r for r in rows if r['id'] not in held]
+        deleted = {r['id'] for r in maybe_stored
+                   if (_same_id(str(r.get('employee_code'))), r['date'], r['log_type'], r['time'][:5]) in deletions}
+        for row_id in deleted:
+            self.database.mark_timesheet_duplicate(row_id, DELETED_IN_PAYROLL, slot=self.slot)
+        if deleted:
+            logger.info(f"Skipped {len(deleted)} upload(s) already deleted in Payroll ({self.label})")
+            stats['deleted_in_payroll'] = stats.get('deleted_in_payroll', 0) + len(deleted)
+        return [r for r in rows if r['id'] not in deleted]
+
+    def _push_data(self, progress_callback=None, timesheet_ids=None, manual_retry=False, automatic=False):
         """
         Push unsynced timesheet data to YAHSHUA Payroll in batches of 50
 
@@ -251,8 +357,9 @@ class PushService:
                               Called with dict: {batch_current, batch_total, batch_size, success, failed}
             timesheet_ids: Optional list of timesheet IDs to push. When provided,
                            only eligible records with these IDs are pushed.
-            manual_retry: Explicit HR retry of previously attempted records; never
-                          enabled by ordinary scheduled or dashboard sync.
+            manual_retry: Resend of previously attempted records: HR's explicit
+                          retry, or the one automatic re-check of recent Unconfirmed uploads.
+            automatic: True for that automatic re-check (no person confirmed it).
 
         Returns:
             tuple: (success: bool, message: str, stats: dict)
@@ -296,6 +403,12 @@ class PushService:
 
             self._token = self.get_valid_token()
 
+            # What each resend was before this try, to restore it if nothing gets sent.
+            self._prior_outcomes = self.database.get_delivery_outcomes(
+                [r['id'] for r in all_unsynced], self.slot) if manual_retry else {}
+            if manual_retry:
+                all_unsynced = self._screen_payroll_deletions(all_unsynced, stats, automatic)
+
             # Build log_list for all valid records
             all_log_entries = []
 
@@ -328,11 +441,16 @@ class PushService:
 
             if len(all_log_entries) == 0:
                 message = "No valid records to sync"
+                if stats.get('deleted_in_payroll'):
+                    message = f"{stats['deleted_in_payroll']} already deleted in Payroll, not sent"
+                held_back = [reason for reason in stats['reasons'] if reason.startswith("Couldn't check Payroll")]
+                if held_back:
+                    message = f"Not sent: {held_back[0]}"
                 logger.info(message)
                 self.database.update_sync_log(
-                    log_id, status='success', records_processed=stats['processed']
+                    log_id, status='error' if held_back else 'success', records_processed=stats['processed']
                 )
-                return True, message, stats
+                return not held_back, message, stats
 
             # Split into batches of 50
             batches = []
@@ -388,7 +506,7 @@ class PushService:
                     # Nothing reached Payroll; keep these for the next automatic run.
                     batch_error = result.get('error', 'Unknown error')
                     logger.error(f"Batch {batch_num} not sent: {batch_error} - stopping")
-                    self.database.release_delivery([r['id'] for r in batch], self.slot, batch_error)
+                    self.database.release_delivery([r['id'] for r in batch], self.slot, batch_error, self._prior_outcomes)
                     break
 
                 else:
@@ -445,6 +563,8 @@ class PushService:
 
             if stats['duplicates']:
                 message += f"; {stats['duplicates']} duplicate(s) skipped, will not retry"
+            if stats.get('deleted_in_payroll'):
+                message += f"; {stats['deleted_in_payroll']} already deleted in Payroll, not sent"
             logger.info(message)
             return batch_error is None, message, stats
 
@@ -508,7 +628,7 @@ class PushService:
                 continue
             if result.get('not_sent'):
                 logger.error(f"Resend of timesheet {entry['id']} not sent: {error} - stopping")
-                self.database.release_delivery([r['id'] for r in batch[index:]], self.slot, error)
+                self.database.release_delivery([r['id'] for r in batch[index:]], self.slot, error, self._prior_outcomes)
                 return error
             # Connection or server trouble: this record may have reached Payroll;
             # the rest never left, so they go back to the automatic queue.
@@ -518,7 +638,7 @@ class PushService:
             stats['failed'] += 1
             stats['reasons'][error] = stats['reasons'].get(error, 0) + 1
             if batch[index + 1:]:
-                self.database.release_delivery([r['id'] for r in batch[index + 1:]], self.slot, error)
+                self.database.release_delivery([r['id'] for r in batch[index + 1:]], self.slot, error, self._prior_outcomes)
             return error
         return None
 

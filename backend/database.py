@@ -596,14 +596,16 @@ class Database:
         finally:
             conn.close()
 
-    def release_delivery(self, ids, slot=1, error_message=None):
+    def release_delivery(self, ids, slot=1, error_message=None, prior_outcomes=None):
         """Undo claims for records that never reached Payroll (no internet, expired login).
 
-        First attempts go back to the automatic queue as if never tried. Manual
-        retries keep their place in the Retry Queue with the new reason.
+        First attempts go back to the automatic queue as if never tried. Resends
+        go back to the state they had before (Failed or Unconfirmed, default
+        Unconfirmed) with the new reason, and the unsent try is not counted.
         """
         if not ids:
             return
+        prior_outcomes = prior_outcomes or {}
         _, _, error_col = _slot_cols(slot)
         conn = self.get_connection()
         try:
@@ -619,8 +621,9 @@ class Database:
                     else:
                         conn.execute(f'UPDATE timesheet SET {error_col}=? WHERE id=?',
                                      (f'Not sent: {error_message}', row_id))
-                        conn.execute("""UPDATE delivery_attempt SET outcome='failed'
-                            WHERE sync_id=? AND slot=? AND outcome='sending'""", (sync_id[0], slot))
+                        outcome = 'failed' if prior_outcomes.get(row_id) == 'failed' else 'unconfirmed'
+                        conn.execute("""UPDATE delivery_attempt SET outcome=?, attempts=MAX(attempts-1, 1)
+                            WHERE sync_id=? AND slot=? AND outcome='sending'""", (outcome, sync_id[0], slot))
         finally:
             conn.close()
 
@@ -786,6 +789,47 @@ class Database:
             conn.rollback()
             logger.error(f"Error marking sync failed: {e}")
             raise
+        finally:
+            conn.close()
+
+    def get_delivery_outcomes(self, ids, slot=1):
+        """Map timesheet id -> this slot's delivery outcome (missing = never attempted)."""
+        if not ids:
+            return {}
+        conn = self.get_connection()
+        try:
+            placeholders = ','.join('?' for _ in ids)
+            rows = conn.execute(f"""SELECT t.id, a.outcome FROM timesheet t
+                JOIN delivery_attempt a ON a.sync_id=t.sync_id AND a.slot=?
+                WHERE t.id IN ({placeholders})""", (int(slot), *ids)).fetchall()
+            return {row['id']: row['outcome'] for row in rows}
+        finally:
+            conn.close()
+
+    def get_recheck_candidates(self, slot=1, within_hours=2, min_age_minutes=5):
+        """Unconfirmed first attempts from the last few hours, not yet re-checked.
+
+        Re-checking soon after the drop means Payroll still has the log if it
+        arrived, so the resend just gets "already exists" back. The minimum age
+        moves the re-check to a later run instead of straight after the drop.
+        Only punches from today or yesterday qualify: upgrading from a build
+        without the delivery ledger stamps old uncertain uploads with "now".
+        """
+        backend, _, _ = _slot_cols(slot)
+        skipped = 'sync_skipped_reason_2' if int(slot) == 2 else 'sync_skipped_reason'
+        conn = self.get_connection()
+        try:
+            rows = conn.execute(f"""SELECT t.id FROM timesheet t
+                JOIN delivery_attempt a ON a.sync_id=t.sync_id AND a.slot=?
+                WHERE a.outcome='unconfirmed' AND a.attempts=1
+                AND a.attempted_at > datetime('now', ?)
+                AND a.attempted_at <= datetime('now', ?)
+                AND t.{backend} IS NULL AND t.{skipped} IS NULL
+                AND t.deleted_at IS NULL AND COALESCE(t.excluded_from_sync,0)=0
+                AND t.date >= date('now', 'localtime', '-1 day')
+                ORDER BY t.created_at ASC""", (int(slot), f'-{int(within_hours)} hours',
+                                                 f'-{int(min_age_minutes)} minutes')).fetchall()
+            return [row['id'] for row in rows]
         finally:
             conn.close()
 
