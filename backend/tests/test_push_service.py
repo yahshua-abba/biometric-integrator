@@ -337,7 +337,7 @@ class TestRejectedBatch:
         assert stats['success'] == 1 and stats['failed'] == 1
         # Record 2 was on the wire when the connection dropped; record 3 never left.
         db.mark_timesheet_sync_failed.assert_called_once_with(2, 'Cannot connect', slot=1, unconfirmed=True)
-        db.release_delivery.assert_called_once_with([3], 1, 'Cannot connect')
+        db.release_delivery.assert_called_once_with([3], 1, 'Cannot connect', {})
 
 
 class TestExpiredLogin:

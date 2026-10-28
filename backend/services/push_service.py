@@ -20,6 +20,12 @@ DEFAULT_YAHSHUA_BASE_URL = "https://yahshuapayroll.com/api"
 RECHECK_WITHIN_HOURS = 2
 DELETED_IN_PAYROLL = 'Deleted in Payroll (approved Delete request) - will not be sent'
 
+def _same_id(code):
+    """Compare employee IDs the way people read them: "0123" and "123" are one person."""
+    code = code.strip()
+    return code.lstrip('0') or code if code.isdigit() else code
+
+
 # User-friendly messages for YAHSHUA error codes
 YAHSHUA_ERROR_MESSAGES = {
     100: "Invalid request format",
@@ -102,6 +108,7 @@ class PushService:
         self.database = database
         self._push_lock = threading.Lock()
         self._token = None  # login token for the run in progress
+        self._prior_outcomes = {}  # resend id -> outcome before this try
         self.slot = int(slot)
         self.suffix = '_2' if self.slot == 2 else ''
         self.label = "Payroll 2 (Secondary)" if self.slot == 2 else "Payroll 1 (Primary)"
@@ -265,22 +272,32 @@ class PushService:
     def fetch_approved_deletions(self, dates):
         """Approved Delete requests in Payroll covering these punch dates.
 
-        Returns a set of (employee code, date, in/out, HH:MM) keys, or None when
+        Returns a set of (employee ID, date, in/out, HH:MM) keys, or None when
         Payroll's requests could not be read. A request's date is the shift
-        date, so a night-shift punch may fall on the following day.
+        date, so a night-shift punch may fall on the following day. Dates are
+        read in windows of a week so a large retry stays a few small requests.
         """
-        days = sorted(datetime.strptime(d, '%Y-%m-%d') for d in dates)
+        days = sorted({datetime.strptime(d, '%Y-%m-%d') for d in dates})
+        windows = []
+        for day in days:
+            if windows and day - windows[-1][0] < timedelta(days=7):
+                windows[-1][1] = day
+            else:
+                windows.append([day, day])
+        records = []
         try:
-            response = self.session.post(
-                f"{self.get_base_url()}/time_log_requests/read/",
-                headers={'Authorization': f'Token {self._token}'},
-                json={'status': 'approved',
-                      'applied_date_from': (days[0] - timedelta(days=1)).strftime('%Y-%m-%d'),
-                      'applied_date_to': days[-1].strftime('%Y-%m-%d')},
-                timeout=60, allow_redirects=False)
-            records = response.json().get('records') if response.status_code == 200 else None
-            if not isinstance(records, list):
-                raise ValueError(f'HTTP {response.status_code}')
+            for first, last in windows:
+                response = self.session.post(
+                    f"{self.get_base_url()}/time_log_requests/read/",
+                    headers={'Authorization': f'Token {self._token}'},
+                    json={'status': 'approved',
+                          'applied_date_from': (first - timedelta(days=1)).strftime('%Y-%m-%d'),
+                          'applied_date_to': last.strftime('%Y-%m-%d')},
+                    timeout=60, allow_redirects=False)
+                page = response.json().get('records') if response.status_code == 200 else None
+                if not isinstance(page, list):
+                    raise ValueError(f'HTTP {response.status_code}')
+                records.extend(page)
         except Exception as e:
             logger.warning(f"Could not read Payroll's approved Delete requests ({self.label}): {e}")
             return None
@@ -289,7 +306,7 @@ class PushService:
             try:
                 if str(req.get('action_type')).lower() != 'delete':
                     continue
-                code = str((req.get('employee') or {}).get('employeeid') or '').strip()
+                code = _same_id(str((req.get('employee') or {}).get('employeeid') or ''))
                 when = str(req.get('existing_time') or req.get('time_from') or '')[:5]
                 day = datetime.strptime(str(req['date'])[:10], '%Y-%m-%d')
                 kind = str(req.get('log_type') or '').lower()
@@ -306,8 +323,7 @@ class PushService:
         Failed uploads were never stored, so only Unconfirmed ones can be a
         deleted log. Returns the rows that may be sent.
         """
-        outcomes = self.database.get_delivery_outcomes([r['id'] for r in rows], self.slot)
-        maybe_stored = [r for r in rows if outcomes.get(r['id']) == 'unconfirmed']
+        maybe_stored = [r for r in rows if self._prior_outcomes.get(r['id']) == 'unconfirmed']
         if not maybe_stored:
             return rows
         deletions = self.fetch_approved_deletions({r['date'] for r in maybe_stored})
@@ -320,7 +336,7 @@ class PushService:
             held = {r['id'] for r in maybe_stored}
             return [r for r in rows if r['id'] not in held]
         deleted = {r['id'] for r in maybe_stored
-                   if (str(r.get('employee_code')), r['date'], r['log_type'], r['time'][:5]) in deletions}
+                   if (_same_id(str(r.get('employee_code'))), r['date'], r['log_type'], r['time'][:5]) in deletions}
         for row_id in deleted:
             self.database.mark_timesheet_duplicate(row_id, DELETED_IN_PAYROLL, slot=self.slot)
         if deleted:
@@ -383,6 +399,9 @@ class PushService:
 
             self._token = self.get_valid_token()
 
+            # What each resend was before this try, to restore it if nothing gets sent.
+            self._prior_outcomes = self.database.get_delivery_outcomes(
+                [r['id'] for r in all_unsynced], self.slot) if manual_retry else {}
             if manual_retry:
                 all_unsynced = self._screen_payroll_deletions(all_unsynced, stats, automatic)
 
@@ -483,7 +502,7 @@ class PushService:
                     # Nothing reached Payroll; keep these for the next automatic run.
                     batch_error = result.get('error', 'Unknown error')
                     logger.error(f"Batch {batch_num} not sent: {batch_error} - stopping")
-                    self.database.release_delivery([r['id'] for r in batch], self.slot, batch_error)
+                    self.database.release_delivery([r['id'] for r in batch], self.slot, batch_error, self._prior_outcomes)
                     break
 
                 else:
@@ -605,7 +624,7 @@ class PushService:
                 continue
             if result.get('not_sent'):
                 logger.error(f"Resend of timesheet {entry['id']} not sent: {error} - stopping")
-                self.database.release_delivery([r['id'] for r in batch[index:]], self.slot, error)
+                self.database.release_delivery([r['id'] for r in batch[index:]], self.slot, error, self._prior_outcomes)
                 return error
             # Connection or server trouble: this record may have reached Payroll;
             # the rest never left, so they go back to the automatic queue.
@@ -615,7 +634,7 @@ class PushService:
             stats['failed'] += 1
             stats['reasons'][error] = stats['reasons'].get(error, 0) + 1
             if batch[index + 1:]:
-                self.database.release_delivery([r['id'] for r in batch[index + 1:]], self.slot, error)
+                self.database.release_delivery([r['id'] for r in batch[index + 1:]], self.slot, error, self._prior_outcomes)
             return error
         return None
 

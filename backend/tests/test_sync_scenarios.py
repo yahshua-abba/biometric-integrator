@@ -946,3 +946,74 @@ class TestUnconfirmedRecheck:
         payroll.requests_readable = True
         app.push.push_data(timesheet_ids=[app.row(key)['id']], manual_retry=True)
         assert payroll.stored == {} and app.attempt(key)['outcome'] == 'resolved'
+
+    # --- Review fixes -------------------------------------------------------
+
+    def test_recheck_without_internet_stays_unconfirmed_and_tries_again(self, app, payroll):
+        key = self._dropped(app, payroll, arrived=True)
+        app.age_attempts(20)
+        payroll.outage = 'no_internet'
+        app.push.push_data()
+        attempt = app.attempt(key)
+        assert attempt['outcome'] == 'unconfirmed' and attempt['attempts'] == 1
+        payroll.outage = None
+        app.age_attempts(20)
+        app.push.push_data()
+        assert app.attempt(key)['outcome'] == 'resolved' and payroll.stored == {key: 1}
+
+    def test_hr_retry_without_internet_keeps_unconfirmed_screened_later(self, app, payroll):
+        """Mislabelled 'Failed' would skip the deletion check on the next Retry."""
+        key = self._dropped(app, payroll, arrived=True)
+        payroll.outage = 'no_internet'
+        app.push.push_data(timesheet_ids=[app.row(key)['id']], manual_retry=True)
+        assert app.attempt(key)['outcome'] == 'unconfirmed'
+        payroll.outage = None
+        payroll.hr_deletes(key, '101', TODAY, kind='in')
+        app.push.push_data(timesheet_ids=[app.row(key)['id']], manual_retry=True)
+        assert payroll.stored == {}
+
+    def test_hr_retry_of_failed_without_internet_stays_failed(self, app, payroll):
+        dev = app.add_device('Lobby', '10.0.0.1', FakeDevice([punch('777', TODAY)]))
+        app.pull.pull_data()
+        app.push.push_data()
+        key = sid(dev, '777', TODAY)
+        payroll.outage = 'no_internet'
+        app.push.push_data(timesheet_ids=[app.row(key)['id']], manual_retry=True)
+        assert app.attempt(key)['outcome'] == 'failed'
+
+    def test_payroll_id_with_leading_zeros_still_matches(self, app, payroll):
+        key = self._dropped(app, payroll, arrived=True)
+        payroll.hr_deletes(key, '0101', TODAY, kind='in')
+        app.age_attempts(20)
+        app.push.push_data()
+        assert payroll.stored == {}
+
+    def test_old_punch_stamped_recent_by_an_upgrade_is_not_rechecked(self, app, payroll):
+        old = TODAY - timedelta(days=5)
+        dev = app.add_device('Lobby', '10.0.0.1', FakeDevice([punch('101', old)]))
+        day = old.strftime('%Y-%m-%d')
+        app.pull.pull_data(date_from=day, date_to=day)
+        key = sid(dev, '101', old)
+        conn = app.db.get_connection()
+        with conn:  # what an upgrade from v1.0.20 writes for an old uncertain failure
+            conn.execute("INSERT INTO delivery_attempt(sync_id,slot,attempted_at,outcome) "
+                         "VALUES(?,1,datetime('now','-10 minutes'),'unconfirmed')", (key,))
+        conn.close()
+        app.push.push_data()
+        assert payroll.requests == [] and app.attempt(key)['outcome'] == 'unconfirmed'
+
+    def test_large_retry_reads_requests_week_by_week(self, app, payroll):
+        base = TODAY.replace(hour=8, minute=0, second=0) - timedelta(days=20)
+        punches = [punch('101', base + timedelta(days=d)) for d in (0, 10, 20)]
+        dev = app.add_device('Lobby', '10.0.0.1', FakeDevice(punches))
+        app.pull.pull_data(date_from=base.strftime('%Y-%m-%d'), date_to=TODAY.strftime('%Y-%m-%d'))
+        payroll.outage = 'timeout'
+        app.push.push_data()
+        payroll.outage = None
+        middle = base + timedelta(days=10)
+        payroll.hr_deletes(sid(dev, '101', middle), '101', middle, kind='in')
+        ids = [app.row(sid(dev, '101', p.timestamp))['id'] for p in punches]
+        payroll.request_reads = 0
+        app.push.push_data(timesheet_ids=ids, manual_retry=True)
+        assert payroll.request_reads == 3
+        assert sid(dev, '101', middle) not in payroll.stored
