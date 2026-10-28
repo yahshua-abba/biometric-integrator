@@ -812,9 +812,9 @@ class TestCleanup:
 class TestUnconfirmedRecheck:
     """The 9402 case (Oct 28): Unconfirmed upload, HR deletes it, a resend restored it."""
 
-    def _dropped(self, app, payroll, arrived=True, user='101', when=TODAY):
+    def _dropped(self, app, payroll, arrived=True, user='101', when=TODAY, kind=0):
         """Upload one punch; the connection drops before Payroll's answer comes back."""
-        dev = app.add_device('Lobby', '10.0.0.1', FakeDevice([punch(user, when)]))
+        dev = app.add_device('Lobby', '10.0.0.1', FakeDevice([punch(user, when, kind)]))
         app.pull.pull_data()
         key = sid(dev, user, when)
         original = payroll._sync
@@ -890,16 +890,26 @@ class TestUnconfirmedRecheck:
 
     def test_night_shift_deletion_dated_the_day_before_still_matches(self, app, payroll):
         after_midnight = TODAY.replace(hour=1, minute=15, second=9)
-        key = self._dropped(app, payroll, when=after_midnight)
+        key = self._dropped(app, payroll, arrived=True, when=after_midnight, kind=1)
         payroll.stored.pop(key)
         payroll.delete_requests.append({
-            'action_type': 'Delete', 'status': 'approved', 'log_type': 'In',
+            'action_type': 'Delete', 'status': 'approved', 'log_type': 'Out',
             'employee': {'employeeid': '101'},
             'date': (after_midnight - timedelta(days=1)).strftime('%Y-%m-%d'),
             'existing_time': '01:15:00'})
         app.age_attempts(20)
         app.push.push_data()
         assert payroll.stored == {}
+
+    @pytest.mark.parametrize('kind,punch_kind,hour', [('in', 0, 8), ('out', 1, 17)])
+    def test_deletion_from_the_day_before_does_not_block_todays_real_punch(self, app, payroll, kind, punch_kind, hour):
+        """Same employee, same minute, next day: only a night shift's morning Out may match."""
+        when = TODAY.replace(hour=hour, minute=0, second=12)
+        key = self._dropped(app, payroll, arrived=False, when=when, kind=punch_kind)
+        payroll.hr_deletes('ZK_unrelated', '101', when - timedelta(days=1), kind=kind)
+        app.age_attempts(20)
+        app.push.push_data()
+        assert payroll.stored == {key: 1}
 
     @pytest.mark.parametrize('other', [
         {'employee': {'employeeid': '102'}},           # another employee

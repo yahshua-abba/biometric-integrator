@@ -274,7 +274,7 @@ class PushService:
 
         Returns a set of (employee ID, date, in/out, HH:MM) keys, or None when
         Payroll's requests could not be read. A request's date is the shift
-        date, so a night-shift punch may fall on the following day. Dates are
+        date, so a night shift's morning Out may fall on the following day. Dates are
         read in windows of a week so a large retry stays a few small requests.
         """
         days = sorted({datetime.strptime(d, '%Y-%m-%d') for d in dates})
@@ -313,8 +313,12 @@ class PushService:
             except (KeyError, TypeError, ValueError):
                 continue
             if code and when and kind in ('in', 'out'):
-                for shift_day in (day, day + timedelta(days=1)):
-                    deletions.add((code, shift_day.strftime('%Y-%m-%d'), kind, when))
+                deletions.add((code, day.strftime('%Y-%m-%d'), kind, when))
+                # A night shift's Out after midnight is filed under the shift's start
+                # date. Only that case reaches into the next day, so a deleted 08:00 In
+                # never blocks the next morning's real 08:00 In.
+                if kind == 'out' and when < '12:00':
+                    deletions.add((code, (day + timedelta(days=1)).strftime('%Y-%m-%d'), kind, when))
         return deletions
 
     def _screen_payroll_deletions(self, rows, stats, automatic):
